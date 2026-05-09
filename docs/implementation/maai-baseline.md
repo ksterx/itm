@@ -159,34 +159,38 @@ ITM が MaAI 重みから派生する fine-tune モデルを作る場合、MaAI 
 
 これは v1 公開前に詰めるべき論点。
 
-## Phase 1 ベースライン数値（AMI ES2002a）
+## Phase 1 ベースライン数値（AMI 5 ミーティング）
 
-`scripts/eval_maai_on_ami.py ES2002a` の結果:
+`scripts/eval_maai_on_ami.py --all` の結果（5 ミーティング、計 165 分）:
 
-```
-Speakers (talk time s): [('A', 97.0), ('B', 490.4), ('C', 44.5), ('D', 386.5)]
-Evaluating channels: ch1=B, ch2=D
-Audio: 21.2 min @ 16 kHz, 25,452 frames @ 20 Hz
-
-=== Results ===
-Frame-level VAD argmax accuracy (single-speaker frames): 0.936
-Hold/shift evaluation: 109 eligible silences
-  hold:  30/55 = 0.545
-  shift: 34/54 = 0.630
-  overall: 64/109 = 0.587
-```
+| 会議 | 評価 ch | dur (s) | Frame VAD | Hold | Shift | Overall |
+|---|---|---:|---:|---:|---:|---:|
+| ES2002a | B, D | 1273 | 0.936 | 30/55 = 0.545 | 34/54 = 0.630 | **0.587** |
+| ES2002b | C, D | 2280 | 0.935 | 40/101 = 0.396 | 42/67 = 0.627 | **0.488** |
+| ES2002c | C, D | 2424 | 0.958 | 56/111 = 0.505 | 19/36 = 0.528 | **0.510** |
+| IS1000a | A, D | 1583 | 0.904 | 96/127 = 0.756 | 26/53 = 0.491 | **0.678** |
+| IS1000b | C, B | 2344 | 0.933 | 86/134 = 0.642 | 23/52 = 0.442 | **0.586** |
+| **POOLED** | — | **9904** | **0.935** | **308/528 = 0.583** | **144/262 = 0.550** | **0.572** |
 
 ### 解釈
 
-- **Frame VAD 精度 93.6%** ─ MaAI の `argmax(p_now)` は GT と高一致。VAD としては十分実用レベル。
-- **Hold/shift 精度 58.7%** ─ VAP 論文の Switchboard 数値（75〜80%）より大幅に低い。原因の見立て：
-    1. **ドメイン差**: MaAI 英語 VAP は電話会話で学習、AMI は 4 人会議。音響条件・会話動態が大きく異なる
-    2. **4 人会議で 2 ch しか使っていない**: 残り 2 名（A、C）が話している時、我々の "ground truth" がノイジーになる
-    3. **AMI で fine-tune していない素のベースライン**
+- **Frame VAD 精度 93.5% (pooled)** ─ MaAI の `argmax(p_now)` は GT と高い一致を示す。VAD としては十分実用レベル
+- **Hold/shift 精度 57.2% (pooled)** ─ VAP 論文の Switchboard 数値（75〜80%）より大幅に低い
+- **会議ごとのばらつき大** （48.8% 〜 67.8%）。IS1000a だけ突出して良いが評価サンプル数も少ない
+
+### 想定通りの低スコア要因
+
+1. **ドメイン差**: MaAI 英語 VAP は **電話会話（Switchboard）** で学習、AMI は **4 人会議**。音響条件と会話動態が大きく異なる
+2. **2 of 4 ch のみ評価**: 残り 2 名（C/A など）が話している時、ground truth がノイジーになる。「mutual silence」も実際は別話者が発話中の可能性
+3. **AMI で fine-tune していない素のベースライン**
+
+### Hold が低めで Shift がさらに低い
+
+会議全体での話し手交替頻度が低い（Hold 528 vs Shift 262）。MaAI のデフォルト出力は中央値付近にあり、Shift の検出感度が足りていない可能性。
 
 ### ITM v1 の目標
 
-このベースラインを v1 で超えること（hold/shift accuracy ≥ 70% 目標）。Phase 2 で AMI を使った fine-tune + マルチイベント拡張で達成を狙う。
+このベースライン（57.2%）を v1 で超えること。**目標 hold/shift accuracy ≥ 70%**。Phase 2 で AMI を使った fine-tune + マルチイベント拡張で達成を狙う。
 
 ## 関連ページ
 
