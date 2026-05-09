@@ -4,6 +4,22 @@
 >
 > ドキュメント・設計の主要変更を記録する。コードの詳細は git log / GitHub Releases に任せる。
 
+## 2026-05-10
+
+### Phase 2 基盤：データ・学習パイプライン実装
+
+`src/itm/data/` に学習基盤を整備:
+
+- `audio.py`: 2 話者 headset 音声の同期ロード + チャンク切り出し
+- `targets.py`: サバイバルラベル → torch tensor 変換 + survival NLL 損失
+- `dataset.py`: `AMIDataset` (`torch.utils.data.Dataset`) + `ami_collate`
+
+5 会議で **983 chunks** (20s chunk / 10s hop)、turn_shift 28k / backchannel 41k / overlap 71k positive frames。
+
+ユニットテスト 23 件追加（合計 44 件、全合格）。
+
+詳細は [学習パイプライン](../implementation/pipeline.md)。
+
 ## 2026-05-09
 
 ### Phase 1 ベースライン数値を取得（5 会議）
