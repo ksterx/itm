@@ -6,6 +6,21 @@
 
 ## 2026-05-10
 
+### Phase 2-B v1 評価: 失敗を確認、原因特定
+
+`scripts/eval_itm_on_ami.py` で IS1000b に対する hold/shift accuracy を測定:
+
+- **Frame VAD: 0.518**（baseline 0.933 から大幅悪化）
+- **Shift: 0/52 = 0.000**（モデルが何も検出できない）
+- すべての silence を HOLD と予測
+
+原因: survival NLL のクラス不均衡 → 「全部 0 を予測」が局所最適。
+追加で、VAP transformer の素朴な fine-tune により VAD 能力も喪失。
+
+→ Phase 2-B v2 で `pos_weight`、VAD 補助損失、ヘッド先行学習で対処。
+
+詳細は [学習パイプライン](../implementation/pipeline.md#phase-2-b-評価結果-学習は失敗した)。
+
 ### Phase 2-B：ITM モデル + 学習スクリプト実装
 
 - `src/itm/models/itm_model.py`: VAP backbone (MaAI) + 3 hazard heads

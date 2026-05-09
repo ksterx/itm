@@ -37,7 +37,8 @@
 - [x] データ層: AMIDataset + survival NLL 損失
 - [x] サバイバルハザード head の実装（`itm.models.ITMModel`）
 - [x] 学習スクリプト + sanity smoke test（loss 単調減少）
-- [ ] AMI で本格 fine-tune（5 meetings, 数 epoch）
+- [x] Phase 2-B v1: 4+1 split で fine-tune → **失敗を確認**（Shift 0%、VAD 崩壊）
+- [ ] **Phase 2-B v2**: pos_weight + VAD 補助損失 + ヘッド先行学習で再挑戦
 - [ ] 既存 VAP_BC、VAP_Nod との比較
 
 ### Phase 3 — 視覚追加

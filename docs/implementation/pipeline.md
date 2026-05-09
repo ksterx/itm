@@ -267,6 +267,85 @@ Done. 8 steps in 19.8s
 
 CPU 1 step ≈ 2.5s（batch=2、chunk=20s）。GPU で 5 〜 10 倍高速化を見込む。
 
+### Smoke test 学習曲線（ES2002a 単独、3 epoch）
+
+`scripts/train_itm.py --meetings ES2002a --epochs 3 --batch-size 2`:
+
+```
+epoch=0 step=20  loss=0.2575  turn_shift=0.232 backchannel=0.226 overlap=0.315
+epoch=0 step=40  loss=0.0495  turn_shift=0.058 backchannel=0.028 overlap=0.063
+epoch=0 step=60  loss=0.0135  turn_shift=0.014 backchannel=0.005 overlap=0.021
+  [val] epoch=0 loss=0.0212
+epoch=1 step=80  loss=0.0156
+epoch=1 step=120 loss=0.0214
+  [val] epoch=1 loss=0.0192
+epoch=2 step=180 loss=0.0188
+  [val] epoch=2 loss=0.0191
+
+Done. 189 steps in 560.6s
+```
+
+- 9.4 分 CPU で 3 epoch 完了
+- Loss は最初の epoch 中に 0.26 → 0.013 と急減
+- val loss は 0.022 → 0.019 で plateau
+- ⚠️ 1 会議のみで train=val なので **汎化評価ではない**。infrastructure の動作確認にとどまる
+
+本格的な汎化評価は次節（Phase 2-B 4+1 split）で行う。
+
+### Phase 2-B 本格学習: 4+1 cross-meeting split
+
+`scripts/train_itm.py --all --epochs 1`:
+
+```
+train meetings: ['ES2002a', 'ES2002b', 'ES2002c', 'IS1000a']
+val   meetings: ['IS1000b']
+train: 750 chunks   val: 117 chunks
+
+epoch=0 step=30  loss=0.1101
+epoch=0 step=60  loss=0.0305
+epoch=0 step=180 loss=0.0234
+epoch=0 step=360 loss=0.0364
+  [val] epoch=0 loss=0.0194  (n_batches=59)
+
+Done. 375 steps in 943.9s
+```
+
+15.7 分 CPU、val loss 0.0194。汎化はしているように見える。
+
+## ⚠ Phase 2-B 評価結果: 学習は失敗した
+
+`scripts/eval_itm_on_ami.py --checkpoint checkpoints/itm_phase2b_v1_best.pt --meetings IS1000b`:
+
+| 指標 | MaAI baseline (Phase 1) | ITM 学習後 (Phase 2-B v1) |
+|---|---|---|
+| Frame VAD accuracy | **0.933** | **0.518** 🔻 |
+| Hold accuracy | 86/134 = 0.642 | 134/134 = 1.000 |
+| Shift accuracy | 23/52 = 0.442 | **0/52 = 0.000** 🔻 |
+| Overall | 0.586 | 0.720 (見かけ) |
+
+すべてのしきい値（0.005 〜 0.5）で全 silence を **HOLD** と予測。Overall 0.720 は class imbalance（hold 72%、shift 28%）による見かけの数字で、実質的にはモデルが何も学習していない。
+
+### なぜ失敗したか
+
+1. **Survival NLL のクラス不均衡**: 各 (frame, bin) のうちイベント発生 bin はせいぜい 1 個、残りはすべて 0。「全部 0 を予測」が局所最適になる
+2. **VAD 能力の喪失**: VAP backbone の transformer 層を fine-tune した結果、元々持っていた VAD 認識（93%）が崩壊（52%）。 hazard 損失だけを最適化すると VAP が学習した話者識別が忘却される
+3. **校正されていないしきい値**: hazard が低い値で偏っており、しきい値スイープしても全部 HOLD 判定になる
+
+### v2 で修正すべき項目
+
+| 修正 | 詳細 |
+|---|---|
+| **Positive class weighting** | survival NLL に `pos_weight` を導入（10〜100 程度）。または focal loss |
+| **VAD 補助損失を併用** | `va_classifier` の出力に対する VAD BCE を total loss に追加して話者識別を保持 |
+| **Backbone 凍結 + ヘッドのみ学習から開始** | `freeze_transformer=True` で先にヘッドを学習、後段で transformer の解凍も検討 |
+| **しきい値の自動較正** | 学習時に hazard 分布を観察し、val で balanced accuracy を最大化するしきい値を選ぶ |
+
+これらは Phase 2-B v2 で実装する。
+
+### Phase 2-B v1 の意義
+
+「失敗した」が、実装と評価インフラは完成しており、**問題点が定量的に観察できる状態** に到達した。これが v2 改善の出発点になる。
+
 ## 関連ページ
 
 - [v1 アーキテクチャ](../design/architecture.md) — モデル設計
