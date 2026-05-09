@@ -159,6 +159,35 @@ ITM が MaAI 重みから派生する fine-tune モデルを作る場合、MaAI 
 
 これは v1 公開前に詰めるべき論点。
 
+## Phase 1 ベースライン数値（AMI ES2002a）
+
+`scripts/eval_maai_on_ami.py ES2002a` の結果:
+
+```
+Speakers (talk time s): [('A', 97.0), ('B', 490.4), ('C', 44.5), ('D', 386.5)]
+Evaluating channels: ch1=B, ch2=D
+Audio: 21.2 min @ 16 kHz, 25,452 frames @ 20 Hz
+
+=== Results ===
+Frame-level VAD argmax accuracy (single-speaker frames): 0.936
+Hold/shift evaluation: 109 eligible silences
+  hold:  30/55 = 0.545
+  shift: 34/54 = 0.630
+  overall: 64/109 = 0.587
+```
+
+### 解釈
+
+- **Frame VAD 精度 93.6%** ─ MaAI の `argmax(p_now)` は GT と高一致。VAD としては十分実用レベル。
+- **Hold/shift 精度 58.7%** ─ VAP 論文の Switchboard 数値（75〜80%）より大幅に低い。原因の見立て：
+    1. **ドメイン差**: MaAI 英語 VAP は電話会話で学習、AMI は 4 人会議。音響条件・会話動態が大きく異なる
+    2. **4 人会議で 2 ch しか使っていない**: 残り 2 名（A、C）が話している時、我々の "ground truth" がノイジーになる
+    3. **AMI で fine-tune していない素のベースライン**
+
+### ITM v1 の目標
+
+このベースラインを v1 で超えること（hold/shift accuracy ≥ 70% 目標）。Phase 2 で AMI を使った fine-tune + マルチイベント拡張で達成を狙う。
+
 ## 関連ページ
 
 - [既存モデル](../research/existing-models.md) — MaAI 詳細

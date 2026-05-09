@@ -6,6 +6,16 @@
 
 ## 2026-05-09
 
+### Phase 1 ベースライン数値を取得
+
+AMI ES2002a で MaAI 英語 VAP を実行（`scripts/eval_maai_on_ami.py`）:
+
+- **Frame VAD 精度 93.6%**（MaAI の `p_now` argmax が GT と一致）
+- **Hold/shift 精度 58.7%**（109 mutual silence、22 分のメタ会議）
+
+VAP 論文の Switchboard 数値（75〜80%）より低いのは想定内（ドメイン差 + 4 人会議の 2 ch 評価）。
+詳細は [MaAI ベースライン](../implementation/maai-baseline.md#phase-1-ベースライン数値ami-es2002a)。
+
 ### MkDocs Material でドキュメントサイトを構築
 
 - 構造: about / research / design / implementation / reference / meta の 6 セクション
