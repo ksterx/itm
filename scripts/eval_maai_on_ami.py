@@ -78,9 +78,7 @@ class FastWav(_MaaiWav):
             # Backpressure: wait until subscribers have drained below cap.
             while True:
                 with self._lock:
-                    max_depth = max(
-                        (q.qsize() for q in self._subscriber_queues), default=0
-                    )
+                    max_depth = max((q.qsize() for q in self._subscriber_queues), default=0)
                 if max_depth < self.QUEUE_CAP:
                     break
                 time.sleep(0.005)
