@@ -1,0 +1,137 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg
+*.egg-info/
+*.eggs/
+develop-eggs/
+dist/
+build/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.manifest
+*.spec
+pip-log.txt
+pip-delete-this-directory.txt
+.installed.cfg
+MANIFEST
+
+# --- Virtualenvs / package managers ---
+.venv/
+venv/
+env/
+ENV/
+.uv/
+uv.lock
+poetry.lock
+Pipfile.lock
+
+# --- Testing / coverage ---
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# --- Type checkers / linters ---
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+.ruff_cache/
+
+# --- Jupyter ---
+.ipynb_checkpoints
+*.ipynb
+
+# --- IDEs / editors ---
+.vscode/
+.idea/
+*.swp
+*.swo
+*.swn
+*~
+.DS_Store
+Thumbs.db
+
+# --- Documentation build ---
+site/
+.cache/
+
+# --- Project: data ---
+data/raw/
+data/processed/
+data/external/
+data/interim/
+*.zip
+*.tar
+*.tar.gz
+
+# --- Project: model artifacts ---
+checkpoints/
+runs/
+wandb/
+mlruns/
+lightning_logs/
+tensorboard/
+outputs/
+hf_cache/
+.hf_cache/
+
+# --- Project: media files ---
+*.wav
+*.mp3
+*.flac
+*.ogg
+*.m4a
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.webm
+
+# --- Project: temp ---
+tmp/
+temp/
+scratch/
+*.log
+*.tmp
+
+# --- Project: secrets ---
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+secrets.yaml
+secrets.json
+.secrets
+
+# --- HuggingFace cache (let user opt-in if desired) ---
+.cache/huggingface/
+
+# --- Claude / agentic workflows ---
+.claude-mem/
+AGENTS.md.bak
+
+# --- macOS ---
+.AppleDouble
+.LSOverride
+Icon
+._*
+.Spotlight-V100
+.Trashes
+.fseventsd

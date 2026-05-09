@@ -1,0 +1,1053 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ターンテイキング検出AI 技術調査レポート</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;700&display=swap');
+
+  :root {
+    --primary: #1a2744;
+    --accent: #2563eb;
+    --accent-light: #dbeafe;
+    --text: #1e293b;
+    --text-secondary: #64748b;
+    --border: #e2e8f0;
+    --bg-code: #f8fafc;
+    --success: #16a34a;
+    --warning: #d97706;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Noto Sans JP', 'Hiragino Sans', 'Yu Gothic', sans-serif;
+    font-size: 10pt;
+    line-height: 1.75;
+    color: var(--text);
+    background: #fff;
+  }
+
+  /* ─── Cover Page ─── */
+  .cover {
+    page-break-after: always;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    background: linear-gradient(160deg, #0f172a 0%, #1e3a8a 60%, #1d4ed8 100%);
+    padding: 80px 80px;
+    color: white;
+  }
+
+  .cover-tag {
+    display: inline-block;
+    font-size: 8pt;
+    font-weight: 500;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    color: #93c5fd;
+    margin-bottom: 32px;
+  }
+
+  .cover h1 {
+    font-size: 32pt;
+    font-weight: 700;
+    line-height: 1.2;
+    color: #fff;
+    margin-bottom: 16px;
+  }
+
+  .cover h1 span {
+    color: #60a5fa;
+  }
+
+  .cover-subtitle {
+    font-size: 13pt;
+    color: #93c5fd;
+    margin-bottom: 64px;
+  }
+
+  .cover-divider {
+    width: 60px;
+    height: 3px;
+    background: #3b82f6;
+    margin-bottom: 40px;
+  }
+
+  .cover-meta {
+    font-size: 9pt;
+    color: #94a3b8;
+    line-height: 2;
+  }
+
+  .cover-meta strong {
+    color: #cbd5e1;
+    font-weight: 500;
+  }
+
+  .cover-toc {
+    margin-top: 60px;
+    padding: 28px 32px;
+    background: rgba(255,255,255,0.07);
+    border-radius: 8px;
+    border-left: 3px solid #3b82f6;
+  }
+
+  .cover-toc-title {
+    font-size: 8pt;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: #60a5fa;
+    margin-bottom: 16px;
+    font-weight: 500;
+  }
+
+  .cover-toc ol {
+    list-style: none;
+    columns: 2;
+    column-gap: 40px;
+  }
+
+  .cover-toc li {
+    font-size: 9pt;
+    color: #cbd5e1;
+    padding: 3px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+  }
+
+  .cover-toc li span {
+    color: #60a5fa;
+    margin-right: 8px;
+    font-weight: 500;
+  }
+
+  /* ─── Page Layout ─── */
+  @page {
+    size: A4;
+    margin: 22mm 18mm 22mm 18mm;
+    @bottom-center {
+      content: counter(page);
+      font-size: 8pt;
+      color: #94a3b8;
+    }
+  }
+
+  .page-content {
+    max-width: 100%;
+  }
+
+  /* ─── Chapter Header ─── */
+  .chapter-header {
+    page-break-before: always;
+    padding: 40px 0 28px 0;
+    border-bottom: 2px solid var(--primary);
+    margin-bottom: 32px;
+  }
+
+  .chapter-header:first-of-type {
+    page-break-before: avoid;
+  }
+
+  .chapter-number {
+    font-size: 8pt;
+    font-weight: 700;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 6px;
+  }
+
+  .chapter-header h2 {
+    font-size: 20pt;
+    font-weight: 700;
+    color: var(--primary);
+    line-height: 1.2;
+  }
+
+  .chapter-header p {
+    margin-top: 8px;
+    color: var(--text-secondary);
+    font-size: 9.5pt;
+  }
+
+  /* ─── Section / Subsection ─── */
+  h3 {
+    font-size: 13pt;
+    font-weight: 700;
+    color: var(--primary);
+    margin: 28px 0 12px 0;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  h4 {
+    font-size: 10.5pt;
+    font-weight: 700;
+    color: var(--accent);
+    margin: 20px 0 8px 0;
+  }
+
+  p {
+    margin-bottom: 10px;
+    text-align: justify;
+  }
+
+  /* ─── Tables ─── */
+  .table-wrap {
+    overflow-x: auto;
+    margin: 16px 0 24px 0;
+  }
+
+  .table-caption {
+    font-size: 8.5pt;
+    color: var(--text-secondary);
+    margin-bottom: 6px;
+    font-style: italic;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 8.5pt;
+    line-height: 1.5;
+  }
+
+  thead tr {
+    background: var(--primary);
+    color: white;
+  }
+
+  thead th {
+    padding: 8px 12px;
+    text-align: left;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+
+  tbody tr:nth-child(even) { background: var(--bg-code); }
+  tbody tr:hover { background: var(--accent-light); }
+
+  tbody td {
+    padding: 7px 12px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+
+  /* ─── Callout Boxes ─── */
+  .callout {
+    padding: 16px 20px;
+    border-radius: 6px;
+    margin: 16px 0;
+    font-size: 9.5pt;
+  }
+
+  .callout-info {
+    background: var(--accent-light);
+    border-left: 4px solid var(--accent);
+  }
+
+  .callout-warn {
+    background: #fef9c3;
+    border-left: 4px solid var(--warning);
+  }
+
+  .callout-success {
+    background: #dcfce7;
+    border-left: 4px solid var(--success);
+  }
+
+  .callout strong { display: block; margin-bottom: 4px; }
+
+  /* ─── Code / Mono ─── */
+  code {
+    font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    font-size: 8pt;
+    background: var(--bg-code);
+    padding: 2px 5px;
+    border-radius: 3px;
+    border: 1px solid var(--border);
+    color: #c7254e;
+  }
+
+  pre {
+    background: #0f172a;
+    color: #e2e8f0;
+    padding: 16px 20px;
+    border-radius: 6px;
+    font-size: 8pt;
+    line-height: 1.6;
+    overflow-x: auto;
+    margin: 12px 0;
+  }
+
+  pre code {
+    background: none;
+    border: none;
+    color: inherit;
+    padding: 0;
+  }
+
+  /* ─── Lists ─── */
+  ul, ol {
+    margin: 8px 0 12px 0;
+    padding-left: 24px;
+  }
+
+  li { margin-bottom: 4px; }
+
+  /* ─── Badges ─── */
+  .badge {
+    display: inline-block;
+    font-size: 7pt;
+    font-weight: 600;
+    padding: 2px 7px;
+    border-radius: 20px;
+    vertical-align: middle;
+  }
+
+  .badge-blue  { background: #dbeafe; color: #1d4ed8; }
+  .badge-green { background: #dcfce7; color: #16a34a; }
+  .badge-amber { background: #fef3c7; color: #92400e; }
+  .badge-red   { background: #fee2e2; color: #b91c1c; }
+
+  /* ─── Architecture Diagram ─── */
+  .arch-diagram {
+    background: #f8fafc;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 24px;
+    margin: 16px 0;
+    text-align: center;
+    font-size: 8.5pt;
+    font-family: 'SF Mono', monospace;
+    line-height: 1.8;
+    color: #334155;
+  }
+
+  .arch-node {
+    display: inline-block;
+    background: var(--primary);
+    color: white;
+    padding: 4px 12px;
+    border-radius: 4px;
+    margin: 2px;
+    font-size: 8pt;
+  }
+
+  .arch-arrow {
+    color: var(--accent);
+    font-size: 10pt;
+    margin: 0 4px;
+  }
+
+  /* ─── Section divider ─── */
+  .section-divider {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 28px 0;
+  }
+
+  /* ─── Roadmap ─── */
+  .roadmap {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 16px;
+    margin: 16px 0;
+  }
+
+  .roadmap-phase {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+  }
+
+  .roadmap-phase-title {
+    font-size: 9pt;
+    font-weight: 700;
+    color: var(--primary);
+    margin-bottom: 6px;
+  }
+
+  .roadmap-phase-label {
+    font-size: 7.5pt;
+    color: var(--text-secondary);
+    margin-bottom: 8px;
+  }
+
+  .roadmap-phase ul {
+    font-size: 8.5pt;
+    margin: 0;
+  }
+
+  /* ─── Footer ─── */
+  .report-footer {
+    margin-top: 48px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+    font-size: 7.5pt;
+    color: var(--text-secondary);
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════
+     COVER PAGE
+════════════════════════════════════════════════════ -->
+<div class="cover">
+  <div class="cover-tag">Technical Survey Report</div>
+  <h1>ターンテイキング検出 AI<br><span>技術調査レポート</span></h1>
+  <div class="cover-subtitle">It's My Turn — 動画からリアルタイムに話者交代を予測する AI プロジェクト</div>
+  <div class="cover-divider"></div>
+  <div class="cover-meta">
+    <strong>作成日</strong>　2026年5月1日<br>
+    <strong>プロジェクト</strong>　github.com/ksterx/itm<br>
+    <strong>目的</strong>　自己学習モデル構築に向けた技術選定・研究動向の把握<br>
+    <strong>調査対象期間</strong>　2015年〜2026年（最新: 2025〜2026年を重点的に）
+  </div>
+
+  <div class="cover-toc">
+    <div class="cover-toc-title">Contents</div>
+    <ol>
+      <li><span>01</span>ターンテイキングの定義と問題設定</li>
+      <li><span>02</span>研究の歴史的経緯</li>
+      <li><span>03</span>最新モデルアーキテクチャ</li>
+      <li><span>04</span>視覚的シグナルと特徴量</li>
+      <li><span>05</span>学習用データセット</li>
+      <li><span>06</span>評価指標とベンチマーク</li>
+      <li><span>07</span>学習パイプライン</li>
+      <li><span>08</span>実用化事例</li>
+      <li><span>09</span>学習ロードマップ（提案）</li>
+      <li><span>10</span>参考文献</li>
+    </ol>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════
+     CHAPTER 1
+════════════════════════════════════════════════════ -->
+<div class="page-content">
+
+<div class="chapter-header">
+  <div class="chapter-number">Chapter 01</div>
+  <h2>ターンテイキングの定義と問題設定</h2>
+  <p>会話における話者交代メカニズムとAIシステムにおける問題の定式化</p>
+</div>
+
+<h3>1.1 ターンテイキングとは</h3>
+<p>ターンテイキング（Turn-taking）とは、会話における話者交代のメカニズムであり、参加者が交互に発話権（フロア）を保持・移譲・取得するプロセスである。Sacks, Schegloff &amp; Jefferson（1974）による古典的研究以来、会話分析の中核概念として扱われてきた。</p>
+<p>AIシステムにおいては「現在の話者が発話を終えるタイミング、または次の話者が発話を開始するタイミングを予測・検出する」問題として定式化される。人間の会話では約 <strong>200ms</strong> という非常に短いギャップで話者交代が行われることが多く、これがAIシステム設計上の最大の難関である（Skantze, 2021）。</p>
+
+<h3>1.2 検出すべきイベントの分類</h3>
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>イベント</th><th>説明</th><th>難易度</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><strong>ターンシフト</strong>（Turn Shift）</td><td>話者が交代する（A→B）</td><td><span class="badge badge-amber">中</span></td></tr>
+    <tr><td><strong>ターンホールド</strong>（Hold）</td><td>現在の話者が発話権を継続保持する</td><td><span class="badge badge-green">低</span></td></tr>
+    <tr><td><strong>バックチャネル</strong>（Backchannel）</td><td>「うん」「そうそう」など相槌。発話権は移譲されない</td><td><span class="badge badge-red">高</span></td></tr>
+    <tr><td><strong>ターンイールディングキュー</strong></td><td>話者が発話権を手放す意図を示す韻律的・統語的手がかり</td><td><span class="badge badge-amber">中</span></td></tr>
+    <tr><td><strong>ターンテイキングキュー</strong></td><td>聞き手が発話権を取ろうとするシグナル（吸気音、姿勢変化など）</td><td><span class="badge badge-red">高</span></td></tr>
+    <tr><td><strong>オーバーラップ</strong>（Overlap）</td><td>二者以上が同時に発話する状態</td><td><span class="badge badge-red">高</span></td></tr>
+    <tr><td><strong>バージイン</strong>（Barge-in）</td><td>ユーザーがシステム発話中に割り込む（対話システム特有）</td><td><span class="badge badge-red">高</span></td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="callout callout-info">
+  <strong>重要な区別</strong>
+  バックチャネルを招く手がかり（Backchannel-Inviting Cues）はターンイールディングキューとは異なる。バックチャネルの場合、話者は発話を続けようとしており、聞き手の理解確認を求めるシグナルを送る（Gravano &amp; Hirschberg, 2011）。
+</div>
+
+<h3>1.3 二者会話 vs 多者会話</h3>
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>項目</th><th>二者会話（Dyadic）</th><th>多者会話（Multiparty）</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>発話権の所在</td><td>一方が保持か、オーバーラップ状態</td><td>誰が次に話すか（Next Speaker Prediction）が加わる</td></tr>
+    <tr><td>アドレシー判定</td><td>不要</td><td>誰に向けて話しているか判定が必要</td></tr>
+    <tr><td>視線の重要度</td><td>二者対話では限定的</td><td>三者以上では非常に有効</td></tr>
+    <tr><td>研究の蓄積</td><td>豊富（大半の既存研究）</td><td>少ない（2025年研究 arXiv:2507.07518 が初の三者VAP）</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>1.4 オフライン検出 vs リアルタイム予測</h3>
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>項目</th><th>オフライン</th><th>リアルタイム</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>入力</td><td>会話全体（事後処理）</td><td>ストリーミング音声</td></tr>
+    <tr><td>遅延許容</td><td>大</td><td>目標 &lt; 300ms</td></tr>
+    <tr><td>活用場面</td><td>会話分析、コーパス構築</td><td>対話システム、ロボット、ビデオ会議</td></tr>
+    <tr><td>典型モデル</td><td>BERT, GPT系</td><td>VAP, CPC+Transformer</td></tr>
+  </tbody>
+</table>
+</div>
+
+<!-- ═══════════════════════════════════════════════
+     CHAPTER 2
+════════════════════════════════════════════════════ -->
+<div class="chapter-header">
+  <div class="chapter-number">Chapter 02</div>
+  <h2>研究の歴史的経緯</h2>
+  <p>ルールベースからディープラーニングへの変遷（2015〜2026）</p>
+</div>
+
+<h3>2.1 ルールベース時代（〜2015年頃）</h3>
+<p>初期の音声対話システムでは <strong>VAD（Voice Activity Detection）＋固定沈黙閾値</strong> が主流だった。典型的な設定では700〜1000msの沈黙をターン終了の合図としていたが、人間の200ms GAP と比較して非常に不自然な応答遅延を招いていた。</p>
+<p>Gravano &amp; Hirschberg（2011, Computer Speech &amp; Language）による「Turn-Taking Cues in Task-Oriented Dialogue」では、ピッチ下降・音節伸長・文完成といった韻律・統語的手がかりのルールを体系化した。</p>
+
+<h3>2.2 統計的・機械学習時代（2015〜2019年頃）</h3>
+<p>LSTMを用いたデータ駆動型アプローチへの移行期。音声波形や韻律特徴量を直接入力とする連続予測モデルが登場した。</p>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>年</th><th>研究</th><th>概要</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>2013〜</td><td>Skantze &amp; Hjalmarsson</td><td>増分処理（Incremental Processing）による リアルタイム応用の理論的枠組みを整備</td></tr>
+    <tr><td>2017</td><td>Skantze「Continuous Turn-Taking with LSTM」</td><td>LSTMで音声の未来発話活動を連続的に予測するフレームワーク提案</td></tr>
+    <tr><td>2017</td><td>Ruede et al.「Deep Learning Backchannel Predictor」(arXiv:1706.01340)</td><td>LSTM＋ピッチ・パワー特徴量でバックチャネル予測。Fisher Corpusで学習、Switchboardで評価。再現率97%超</td></tr>
+    <tr><td>2018</td><td>Roddy et al.「Investigating Speech Features」</td><td>複数言語・ジャンルにまたがるLSTMターンテイキング予測</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>2.3 Transformer 時代（2020〜2021年頃）</h3>
+<p>GPT-2ベースのTransformerをターンシフト予測に応用した <strong>TurnGPT</strong>（Ekstedt &amp; Skantze, 2020, arXiv:2010.10874）が登場。テキスト（転記）ベースでTurn Relevant Point（TRP）を予測し、LSTMを大幅に上回る性能を示した。「tomorrow」と「yesterday」の後でのターンシフト確率の違いを文脈から正しく予測できることを実証。</p>
+
+<h3>2.4 VAP時代（2022年〜現在）</h3>
+<p>最も重要なアーキテクチャ転換。音響波形から直接、<strong>自己教師あり学習</strong> でターンテイキングを学習する枠組みが確立された。ラベルアノテーションを必要とせず、大規模データでの事前学習が可能となった。</p>
+
+<h3>2.5 フルデュプレックス・基盤モデル時代（2024年〜）</h3>
+<p>OpenAIのGPT-4oをはじめ、ターン管理を暗に内包した真のフルデュプレックス音声対話基盤モデルが商用化。研究においても <strong>Moshi</strong>（Kyutai, 2024）、<strong>DualTurn</strong>（2026）など音声生成を前提とした統合モデルが登場している。</p>
+
+<!-- ═══════════════════════════════════════════════
+     CHAPTER 3
+════════════════════════════════════════════════════ -->
+<div class="chapter-header">
+  <div class="chapter-number">Chapter 03</div>
+  <h2>最新モデルアーキテクチャ</h2>
+  <p>2022〜2026年の主要モデルの仕組みと仕様</p>
+</div>
+
+<h3>3.1 VAP（Voice Activity Projection）― 現在の最重要ベースライン</h3>
+<p>Ekstedt &amp; Skantze「Voice Activity Projection: Self-supervised Learning of Turn-taking Events」Interspeech 2022 が原著。</p>
+<p>VAPは二者会話の <strong>ステレオ音声</strong>（各チャンネルが各話者の音声）を入力とし、<strong>次の2秒間の両話者の発話活動</strong> を確率分布として出力する自己教師あり学習モデル。ターンシフトやホールドといった離散的ラベルは学習に不要で、「どちらが次に話しているか」の未来確率からターン状態を暗示的に計算できる。</p>
+
+<div class="arch-diagram">
+  <div style="margin-bottom:12px; font-weight:600; color:#1e3a8a;">VAP アーキテクチャ概要</div>
+  <span class="arch-node">ステレオ音声 (16kHz)</span>
+  <span class="arch-arrow">→</span>
+  <span class="arch-node">CPC エンコーダ ×2</span>
+  <span class="arch-arrow">→</span>
+  <span class="arch-node">Self-Attention Transformer</span>
+  <span class="arch-arrow">→</span>
+  <span class="arch-node">Cross-Attention Transformer</span>
+  <span class="arch-arrow">→</span>
+  <span class="arch-node">発話活動確率 (50Hz)</span>
+</div>
+
+<div class="table-wrap">
+<div class="table-caption">VAP アーキテクチャ仕様</div>
+<table>
+  <thead>
+    <tr><th>コンポーネント</th><th>仕様</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>入力</td><td>ステレオ音声、サンプリングレート 16kHz、最大20秒</td></tr>
+    <tr><td>フレームレート</td><td>50 Hz（20ms/フレーム）</td></tr>
+    <tr><td>CPCエンコーダ</td><td>5層CNN + 1層GRU。LibriSpeechで事前学習済み（フリーズ）。出力次元256</td></tr>
+    <tr><td>Self-Attention Transformer</td><td>各チャンネル独立に1層Transformer（次元256）</td></tr>
+    <tr><td>Cross-Attention Transformer</td><td>チャンネル1がQuery、チャンネル2がKey/Value</td></tr>
+    <tr><td>出力ベクトル</td><td>両チャンネル結合で512次元</td></tr>
+    <tr><td>VAP出力</td><td>次2秒の発話活動確率（256次元状態ベクトル）</td></tr>
+    <tr><td>学習率</td><td>3.63×10⁻⁴（AdamW、weight_decay=0.001）</td></tr>
+    <tr><td>バッチサイズ</td><td>8</td></tr>
+    <tr><td>エポック数</td><td>20（ReduceLROnPlateau、factor=0.5、patience=10）</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h4>VAP 派生研究</h4>
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>研究</th><th>arXiv / 発表</th><th>主な変更点</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>Real-time VAP</td><td>arXiv:2401.04868, IWSDS 2024</td><td>TCPストリーミング対応。160サンプル（10ms@16kHz）単位処理、CPU動作実証</td></tr>
+    <tr><td>Multilingual VAP</td><td>arXiv:2403.06487, LREC-COLING 2024</td><td>英語・中国語・日本語の三言語対応。wav2vec2 (MMS) をエンコーダに使用</td></tr>
+    <tr><td>Backchannel VAP</td><td>arXiv:2410.15929, NAACL 2025</td><td>VAPをバックチャネル予測にファインチューニング。種別（Yeah/Un/Oh）まで予測</td></tr>
+    <tr><td>Triadic VAP</td><td>arXiv:2507.07518, Interspeech 2025</td><td>初の三者会話拡張。新規日本語三者コーパスTEIDAN（18チーム、54会話）を構築</td></tr>
+    <tr><td>MM-VAP（映像統合）</td><td>IEICE 2024 / arXiv:2506.03980</td><td>FAU・頭部姿勢・視線・顔表情を後期融合。精度79%→84%</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>3.2 TurnGPT — テキストベース Transformer（2020）</h3>
+<p>arXiv:2010.10874（EMNLP 2020 Findings）。GPT-2をベースにしたターンシフト予測Transformer。転記テキストから Turn Relevant Point（TRP）を予測。意味的文脈を活用できる点が強みだが、リアルタイム適用には制限がある。</p>
+
+<h3>3.3 Acoustic + LLM Fusion — Amazon（2024）</h3>
+<p>arXiv:2401.14717（ICASSP 2024）。Amazonのアプローチで神経音響モデル（CNN/LSTM系）と LLM（GPT-2 124M、RedPajama 3B）をフュージョン。Switchboardデータで学習し、マルチタスク・インストラクションファインチューニングで会話文脈理解を向上。ターンテイキングF1（weighted）: 0.633。</p>
+
+<h3>3.4 Moshi — フルデュプレックス基盤モデル（2024）</h3>
+<p>arXiv:2410.00037（Kyutai Labs）。フルデュプレックス対話の最初の完全オープンソース実装。ユーザー音声と自分の音声を <strong>並列ストリーム</strong> としてモデル化し、明示的なターン管理が不要。</p>
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>項目</th><th>仕様</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>アーキテクチャ</td><td>Helium（7Bテキスト LM）+ Mimi（ストリーミング神経音響コーデック）+ Temporal Transformer（7B）+ Depth Transformer（小型）</td></tr>
+    <tr><td>理論遅延</td><td>160ms（Mimiフレームサイズ80ms + 音響遅延80ms）</td></tr>
+    <tr><td>実測遅延</td><td>約200ms（L4 GPU上）</td></tr>
+    <tr><td>特徴</td><td>Inner Monologue: テキストトークンを音声トークンより先に予測</td></tr>
+    <tr><td>OSS</td><td>github.com/kyutai-labs/moshi</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>3.5 DualTurn — 生成音声事前学習（2026）</h3>
+<p>arXiv:2603.08216。Mimi神経コーデック（フリーズ済み）で音声エンコードし、0.5B LLMバックボーンに音声埋め込みを入力。各話者チャンネルについて6分類シグナルを予測。VAPよりも <strong>220ms早く</strong> ターン終了を予測できる先行予測能力を持ち、アノテーションなしで学習可能。</p>
+
+<h3>3.6 軽量・エッジ向けモデル</h3>
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>モデル</th><th>パラメータ数</th><th>推論速度</th><th>特徴</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>Smart Turn v3（pipecat-ai）</td><td>8M</td><td>CPU 10ms</td><td>Whisper Tiny + 線形分類器。23言語対応。量子化（int8）</td></tr>
+    <tr><td>TurnSense（latishab）</td><td>135M（SmolLM2）</td><td>Raspberry Pi 対応</td><td>超軽量、組み込みデバイス向け</td></tr>
+    <tr><td>SpeculativeETD</td><td>二段構成</td><td>GRUローカル + サーバー精緻化</td><td>軽量GRUで初期判定、必要時のみ重いWav2vecで補正</td></tr>
+  </tbody>
+</table>
+</div>
+
+<!-- ═══════════════════════════════════════════════
+     CHAPTER 4
+════════════════════════════════════════════════════ -->
+<div class="chapter-header">
+  <div class="chapter-number">Chapter 04</div>
+  <h2>視覚的シグナルと特徴量</h2>
+  <p>映像モダリティの活用と特徴量抽出</p>
+</div>
+
+<h3>4.1 視覚特徴の寄与度ランキング（MM-VAP研究より）</h3>
+<p>MM-VAP（IEICE 2024）の研究では、視覚特徴をアブレーション分析した結果、以下の寄与度が判明した。</p>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>順位</th><th>特徴量</th><th>次元数</th><th>ホールド/シフト精度への寄与</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>1位</td><td><strong>FAU（顔動作単位）</strong></td><td>17次元</td><td>最大。眉・顎・鼻・唇の筋肉動き</td></tr>
+    <tr><td>2位</td><td><strong>頭部姿勢（Head Pose）</strong></td><td>3次元（ロール・ピッチ・ヨー）</td><td>大</td></tr>
+    <tr><td>3位</td><td><strong>視線（Gaze）</strong></td><td>6次元（各眼の3Dベクトル）</td><td>三者会話で有効、二者対話では限定的</td></tr>
+    <tr><td>4位</td><td><strong>顔ランドマーク</strong></td><td>60次元（15点×座標）</td><td>中</td></tr>
+    <tr><td>5位</td><td><strong>身体ジェスチャー</strong></td><td>可変</td><td>NoXiベースの研究で有効</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>4.2 顔特徴抽出ツール</h3>
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>ツール</th><th>出力</th><th>特徴</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><strong>OpenFace 2.0</strong></td><td>FAU、頭部姿勢、視線、ランドマーク</td><td>最もよく使われる標準ツール。CPU動作可能</td></tr>
+    <tr><td><strong>Former-DFER</strong></td><td>顔表情特徴ベクトル</td><td>動的顔表情認識Transformer。DFEWデータセット事前学習済み</td></tr>
+    <tr><td><strong>MediaPipe Face Landmarker</strong></td><td>ランドマーク、顔メッシュ</td><td>リアルタイム処理。モバイル/エッジ向き</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>4.3 マルチモーダル融合戦略</h3>
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>戦略</th><th>説明</th><th>採用例</th><th>利点</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><strong>後期融合（Late Fusion）</strong></td><td>モーダルごとに独立エンコード後、出力直前で結合</td><td>MM-VAP</td><td>実装容易、モーダル欠損に強い</td></tr>
+    <tr><td><strong>クロスアテンション</strong></td><td>二話者間の動的相互作用をTransformerで捉える</td><td>VAP系の主流</td><td>話者間相互作用を明示的にモデル化</td></tr>
+    <tr><td><strong>低ランク分解融合</strong></td><td>任意モーダルドロップアウト学習で欠損対応</td><td>MM-F2F（arXiv:2505.12654）</td><td>実環境での欠損モーダルに強い</td></tr>
+    <tr><td><strong>Inter-modal Transformer</strong></td><td>音声・映像の両ストリームをクロスアテンションで統合</td><td>VAP with Multimodal Encoders（arXiv:2506.03980）</td><td>モーダル間の時間的対応を学習</td></tr>
+  </tbody>
+</table>
+</div>
+
+<!-- ═══════════════════════════════════════════════
+     CHAPTER 5
+════════════════════════════════════════════════════ -->
+<div class="chapter-header">
+  <div class="chapter-number">Chapter 05</div>
+  <h2>学習用データセット</h2>
+  <p>ターンテイキング検出モデルの訓練・評価に使用可能なコーパス</p>
+</div>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>データセット</th><th>規模</th><th>モダリティ</th><th>言語</th><th>特徴・用途</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><strong>CANDOR</strong></td><td>1,656会話、850時間超、7M語</td><td>音声 + 映像</td><td>英語</td><td>ビデオチャット。ターンテイキング指向設計。VAPの主要学習データ</td></tr>
+    <tr><td><strong>Switchboard</strong></td><td>2,438会話、260時間、543話者</td><td>音声のみ</td><td>英語</td><td>電話音声。ダイアログアクトアノテーション付き。英語の標準ベンチマーク</td></tr>
+    <tr><td><strong>Fisher Corpus</strong></td><td>約2,000時間</td><td>音声のみ</td><td>英語</td><td>Switchboardの拡張版。大規模事前学習に使用</td></tr>
+    <tr><td><strong>NoXi</strong></td><td>複数時間</td><td>音声 + 映像 + 動作</td><td>英・仏・独・日・中 他</td><td>専門家-初学者対話。エンゲージメント・ターンテイキング注釈付き。マルチモーダル研究の標準データセット</td></tr>
+    <tr><td><strong>NoXi+J（2024）</strong></td><td>—</td><td>音声 + 映像</td><td>日本語・中国語（追加）</td><td>アジア・欧州の文化差比較可能</td></tr>
+    <tr><td><strong>MM-F2F（2025）</strong></td><td>210時間、1.5M語</td><td>音声 + 映像 + テキスト</td><td>英語</td><td>51,000ターン、22,000バックチャネル注釈。ACL 2025で公開</td></tr>
+    <tr><td><strong>TEIDAN（2025）</strong></td><td>18チーム、54会話</td><td>音声（話者別チャンネル）</td><td>日本語</td><td>初の日本語三者会話コーパス（Triadic VAP研究用）</td></tr>
+    <tr><td><strong>RLR-CHAT</strong></td><td>30時間</td><td>音声 + 映像（Ariaグラス）</td><td>英語</td><td>三者会話、難聴者含む、視線+音声同期</td></tr>
+    <tr><td><strong>日本語旅行代理店タスク対話</strong></td><td>92.5時間</td><td>音声</td><td>日本語</td><td>Multilingual VAP（2024）の日本語モデル学習に使用実績</td></tr>
+    <tr><td><strong>HKUST Mandarin</strong></td><td>—</td><td>音声</td><td>中国語</td><td>Multilingual VAPの中国語モデル学習用</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="callout callout-success">
+  <strong>推奨スタートデータセット</strong>
+  CANDOR（英語、850時間超、映像+音声、VAPの学習用途に設計）が最もおすすめ。日本語で始める場合は日本語旅行代理店タスク対話（92.5時間）またはTEIDAN（三者会話対応）。
+</div>
+
+<!-- ═══════════════════════════════════════════════
+     CHAPTER 6
+════════════════════════════════════════════════════ -->
+<div class="chapter-header">
+  <div class="chapter-number">Chapter 06</div>
+  <h2>評価指標とベンチマーク</h2>
+  <p>モデル性能の測定方法と主要な数値比較</p>
+</div>
+
+<h3>6.1 評価指標の分類</h3>
+<h4>分類系指標</h4>
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>指標</th><th>説明</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>F1スコア</td><td>ターンシフト・バックチャネル・ホールドの各クラス予測精度（精度と再現率の調和平均）</td></tr>
+    <tr><td>AUC-ROC</td><td>閾値に依存しない総合的な分類性能</td></tr>
+    <tr><td>Weighted F1</td><td>クラス不均衡を考慮した加重F1スコア</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h4>タイミング系指標</h4>
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>指標</th><th>説明</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>Response Latency</td><td>相手の発話終了から自分の応答開始までの時間（人間基準: 約200ms）</td></tr>
+    <tr><td>Onset / Offset</td><td>応答開始タイミングと直前発話終了タイミングの差（正=ギャップ、負=オーバーラップ）</td></tr>
+    <tr><td>Stop Latency</td><td>オーバーラップ発話の開始からシステムが発話を止めるまでの時間</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>6.2 主要モデルの性能比較</h3>
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>モデル</th><th>データセット</th><th>主要指標</th><th>値</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>VAP（音声のみ）</td><td>CANDOR/Switchboard</td><td>ホールド/シフト精度</td><td>79%</td></tr>
+    <tr><td>MM-VAP（視覚統合）</td><td>CANDOR/Switchboard</td><td>ホールド/シフト精度</td><td>84%（+5%）</td></tr>
+    <tr><td>Amazon LLM Fusion</td><td>Switchboard（260時間）</td><td>ターンテイキングF1（weighted）</td><td>0.633</td></tr>
+    <tr><td>Amazon LLM Fusion</td><td>Switchboard</td><td>バックチャネルF1</td><td>0.349</td></tr>
+    <tr><td>MM-F2F（3モーダル）</td><td>独自210時間</td><td>ターンテイキングF1</td><td>0.81</td></tr>
+    <tr><td>Gaze-VAP（三者会話）</td><td>RLR-CHAT</td><td>F1</td><td>0.765</td></tr>
+    <tr><td>Smart Turn v3</td><td>独自</td><td>推論レイテンシ（CPU）</td><td>10ms</td></tr>
+    <tr><td>Deepgram Flux</td><td>商用</td><td>ターン終了検出レイテンシ</td><td>約260ms</td></tr>
+    <tr><td>GPT-Realtime-1.5</td><td>Full-Duplex-Bench</td><td>会話ダイナミクススコア</td><td>95.7%</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="callout callout-warn">
+  <strong>ベンチマーク比較の注意点</strong>
+  IWSDS 2025サーベイ論文（Castillo-López et al.）では、<strong>レビューした研究の72%が先行研究との比較を行っていない</strong>という問題点を指摘している。評価データセットや設定が異なるため、上記の数値は参考値として扱うこと。
+</div>
+
+<!-- ═══════════════════════════════════════════════
+     CHAPTER 7
+════════════════════════════════════════════════════ -->
+<div class="chapter-header">
+  <div class="chapter-number">Chapter 07</div>
+  <h2>学習パイプライン</h2>
+  <p>データ前処理から学習・評価までの実装ガイド</p>
+</div>
+
+<h3>7.1 データ前処理ステップ</h3>
+<h4>音声側</h4>
+<ol>
+  <li>話者別チャンネル分離（または話者ダイアリゼーション）</li>
+  <li>リサンプリング: 16kHz（VAPの標準サンプリングレート）</li>
+  <li>VADアノテーション: 発話区間のタイムスタンプ生成</li>
+  <li>ターンシフト/バックチャネルイベントのラベリング</li>
+  <li>発話レベルの振幅正規化</li>
+</ol>
+
+<h4>映像側（MM-VAPを使う場合）</h4>
+<ol>
+  <li>OpenFace 2.0でFAU・頭部姿勢・視線・ランドマークを抽出（30fps）</li>
+  <li>音声（50Hz）と映像（30fps）のタイムスタンプ同期・補間</li>
+  <li>欠損フレームの補完処理（照明不足等）</li>
+</ol>
+
+<h4>VAPターゲット生成</h4>
+<p>未来2秒間のウィンドウを複数のサブウィンドウに分割し、各サブウィンドウで各話者の発話有無を二値ラベル化する。「ホールド」「シフト」などの状態はこれらのラベルの組み合わせから定義される。</p>
+
+<h3>7.2 代表的な学習設定</h3>
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>ハイパーパラメータ</th><th>VAP（Ekstedt &amp; Skantze 系列）</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>オプティマイザ</td><td>AdamW</td></tr>
+    <tr><td>学習率</td><td>3.63×10⁻⁴</td></tr>
+    <tr><td>Weight decay</td><td>0.001</td></tr>
+    <tr><td>バッチサイズ</td><td>8</td></tr>
+    <tr><td>エポック数</td><td>20</td></tr>
+    <tr><td>LRスケジューラ</td><td>ReduceLROnPlateau（factor=0.5、patience=10）</td></tr>
+    <tr><td>設定管理</td><td>Hydra（コマンドライン上書き対応）</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>7.3 スクラッチ vs ファインチューニング</h3>
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>戦略</th><th>適する場面</th><th>課題</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>スクラッチ学習</td><td>特定言語・ドメインへの最適化</td><td>大量データ必要、計算コスト高</td></tr>
+    <tr><td>CPCエンコーダ転移（VAPスタイル）</td><td>音響表現のみ転移してターン予測を学習</td><td>CPCはフリーズするため音響特徴に制限</td></tr>
+    <tr><td>VAPファインチューニング</td><td>学習済みVAPをバックチャネル専用にアダプト</td><td>VAPの二値確率制約を拡張する必要あり</td></tr>
+    <tr><td>LLMファインチューニング</td><td>意味的文脈を活用したい場合</td><td>推論コストが高く、リアルタイム適用困難</td></tr>
+    <tr><td>フルデュプレックス基盤モデル</td><td>真のリアルタイム対話に内包</td><td>巨大モデル（7B）、推論コスト高</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>7.4 既存 OSS 実装一覧</h3>
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>プロジェクト</th><th>GitHub / HuggingFace</th><th>概要</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>VoiceActivityProjection</td><td>ErikEkstedt/VoiceActivityProjection</td><td>VAPのリファレンス実装。Hydra設定管理。CANDOR/Switchboard/Fisherで学習済み重みあり</td></tr>
+    <tr><td>VAP-Realtime</td><td>inokoj/VAP-Realtime</td><td>TCPリアルタイムストリーミング対応。CPU動作実証済み</td></tr>
+    <tr><td>TurnGPT</td><td>ErikEkstedt/TurnGPT</td><td>テキストベースのターンシフト予測Transformer</td></tr>
+    <tr><td>Smart Turn</td><td>pipecat-ai/smart-turn</td><td>8Mパラメータ、CPU 10ms推論、23言語対応</td></tr>
+    <tr><td>Easy Turn</td><td>ASLP-lab/Easy-Turn（HuggingFace: ASLP-lab/Easy-Turn）</td><td>音響+言語2モーダル、4状態（complete/incomplete/backchannel/wait）予測</td></tr>
+    <tr><td>TurnSense</td><td>latishab/turnsense</td><td>SmolLM2-135M微調整。Raspberry Pi対応の超軽量モデル</td></tr>
+    <tr><td>Moshi</td><td>kyutai-labs/moshi</td><td>フルデュプレックス基盤モデル（7B）。PyTorch/MLX/Rust実装あり</td></tr>
+    <tr><td>VAPwithAudioFaceEncoders</td><td>sagatake/VAPwithAudioFaceEncoders</td><td>音声+顔表情エンコーダを統合したVAP拡張</td></tr>
+  </tbody>
+</table>
+</div>
+
+<!-- ═══════════════════════════════════════════════
+     CHAPTER 8
+════════════════════════════════════════════════════ -->
+<div class="chapter-header">
+  <div class="chapter-number">Chapter 08</div>
+  <h2>実用化事例</h2>
+  <p>商用製品・スタートアップ・ロボット分野での採用動向</p>
+</div>
+
+<h3>8.1 商用音声 AI サービス</h3>
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>製品・サービス</th><th>組織</th><th>技術的特徴</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><strong>GPT-4o Advanced Voice Mode</strong></td><td>OpenAI（2024年7月〜）</td><td>Full-Duplex-Benchで95.7%スコア（最高水準）。ターン管理を内部に実装</td></tr>
+    <tr><td><strong>Deepgram Flux</strong></td><td>Deepgram（2025年GA）</td><td>意味・音響・フルターン文脈の統合。遅延約260ms。エージェント応答遅延200〜600ms削減。多言語版（10言語）2026年4月GA</td></tr>
+    <tr><td><strong>Moshi</strong></td><td>Kyutai Labs（2024年9月〜）</td><td>完全オープンソース。HuggingFaceでモデル公開（kyutai/moshiko-pytorch-bf16）</td></tr>
+    <tr><td><strong>NVIDIA PersonaPlex</strong></td><td>NVIDIA ADLR</td><td>多様な声・ペルソナ選択可能なフルデュプレックス会話AIシステム</td></tr>
+    <tr><td><strong>Amazon Alexa+</strong></td><td>Amazon（2025〜2026年ロールアウト）</td><td>生成AI刷新版。ターンテイキング改善を主要改良点として明示</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>8.2 音声エージェント（コールセンター・対話）</h3>
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>企業</th><th>動向</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><strong>PolyAI</strong></td><td>2025年12月に8,600万ドルのシリーズD調達。自然な会話型音声エージェントを提供</td></tr>
+    <tr><td><strong>Rime</strong></td><td>月間1億件以上の通話処理。Domino's、Wingstopなどのエンタープライズ向け</td></tr>
+    <tr><td><strong>Cisco Webex AI Agent</strong></td><td>セマンティックVAD＋ASR信頼スコアの組み合わせによる高精度ターン検出を公式ブログで公開</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="callout callout-info">
+  <strong>業界トレンド</strong>
+  サブ300ms応答の音声エージェントが業界標準になりつつある（2024〜2025年トレンド）。従来のASR+VAD+エンドポインティングのパイプライン構成から、統合エンドツーエンドモデルへの移行が加速している。
+</div>
+
+<h3>8.3 ロボット・HRI（Human-Robot Interaction）</h3>
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>プロジェクト</th><th>概要</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><strong>Furhat Robot + VAP（2025、arXiv:2501.08946）</strong></td><td>VAP + TurnGPTをFurhatロボットに実装し39人の成人と対話実験。LLMと連携した自律応答生成に統合。マルチパーティ対話拡張も研究中</td></tr>
+    <tr><td><strong>SoftBank Pepper / NAO</strong></td><td>Pepperの生産は2020〜2021年に一時停止。2025年にMaxvision Technology Corp.がAldebaranのIP資産を取得</td></tr>
+  </tbody>
+</table>
+</div>
+
+<!-- ═══════════════════════════════════════════════
+     CHAPTER 9
+════════════════════════════════════════════════════ -->
+<div class="chapter-header">
+  <div class="chapter-number">Chapter 09</div>
+  <h2>学習ロードマップ（提案）</h2>
+  <p>「It's My Turn」プロジェクトにおける段階的実装計画</p>
+</div>
+
+<h3>9.1 三段階ロードマップ</h3>
+
+<div class="roadmap">
+  <div class="roadmap-phase">
+    <div class="roadmap-phase-title">Phase 1</div>
+    <div class="roadmap-phase-label">音声のみ・ベースライン構築</div>
+    <ul>
+      <li>VAPリポジトリのセットアップ</li>
+      <li>CANDORデータセット取得・前処理</li>
+      <li>既存の学習済み重みで動作確認</li>
+      <li>VAPでホールド/シフト予測（目標精度: 79%）</li>
+      <li>VAP-Realtimeでリアルタイム動作確認</li>
+    </ul>
+  </div>
+  <div class="roadmap-phase">
+    <div class="roadmap-phase-title">Phase 2</div>
+    <div class="roadmap-phase-label">映像特徴の統合</div>
+    <ul>
+      <li>OpenFace 2.0でFAU・頭部姿勢・視線を抽出</li>
+      <li>音声/映像の時刻同期パイプライン実装</li>
+      <li>MM-VAPアーキテクチャで後期融合</li>
+      <li>映像特徴のアブレーション評価</li>
+      <li>目標精度: 84%（+5%）</li>
+    </ul>
+  </div>
+  <div class="roadmap-phase">
+    <div class="roadmap-phase-title">Phase 3</div>
+    <div class="roadmap-phase-label">リアルタイム最適化</div>
+    <ul>
+      <li>ストリーミング推論パイプライン構築</li>
+      <li>モデル量子化（int8）による軽量化</li>
+      <li>投機的推論（SpeculativeETD式）の導入</li>
+      <li>目標レイテンシ: &lt; 300ms</li>
+      <li>エッジデバイスでの動作検証</li>
+    </ul>
+  </div>
+</div>
+
+<h3>9.2 未解決課題と注意点</h3>
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>課題</th><th>詳細・対策</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>統一ベンチマークの欠如</td><td>72%の研究が先行研究と比較していない。独自評価セットを早期に構築すること</td></tr>
+    <tr><td>マルチパーティ対話</td><td>三者以上の会話での次話者予測は未成熟。TEIDAN/RLR-CHAT コーパスの活用を検討</td></tr>
+    <tr><td>音響特徴の限界</td><td>CPC（5.8Mパラメータ）は意味モデリング能力が低く、バックチャネルとターン終了の区別が困難</td></tr>
+    <tr><td>言語依存性</td><td>日本語での評価は英語より少ない。Multilingual VAP（arXiv:2403.06487）の日本語モデルを参考に</td></tr>
+    <tr><td>文化差</td><td>アジア・欧州間の非言語コミュニケーション様式の違いへの対応（NoXi+Jが取り組む方向性）</td></tr>
+    <tr><td>映像特徴の欠損</td><td>照明不足・顔の向きによるOpenFace検出失敗。モーダルドロップアウト学習（MM-F2F方式）で対応</td></tr>
+  </tbody>
+</table>
+</div>
+
+<!-- ═══════════════════════════════════════════════
+     CHAPTER 10
+════════════════════════════════════════════════════ -->
+<div class="chapter-header">
+  <div class="chapter-number">Chapter 10</div>
+  <h2>参考文献</h2>
+  <p>本レポートで参照した主要論文・リポジトリ・商用サービス</p>
+</div>
+
+<h3>主要論文</h3>
+<ul style="font-size:8.5pt; line-height:1.8;">
+  <li>Ekstedt &amp; Skantze (2022). Voice Activity Projection: Self-supervised Learning of Turn-taking Events. <em>Interspeech 2022</em>. GitHub: ErikEkstedt/VoiceActivityProjection</li>
+  <li>Ekstedt &amp; Skantze (2020). TurnGPT: a Transformer-based Language Model for Predicting Turn-taking. <em>EMNLP 2020 Findings</em>. arXiv:2010.10874</li>
+  <li>Inoue et al. (2024). Real-time and Continuous Turn-taking Prediction Using Voice Activity Projection. <em>IWSDS 2024</em>. arXiv:2401.04868</li>
+  <li>Inoue et al. (2024). Multilingual Turn-taking Prediction Using Voice Activity Projection. <em>LREC-COLING 2024</em>. arXiv:2403.06487</li>
+  <li>Inoue et al. (2025). Yeah, Un, Oh: Backchannel Prediction with Fine-tuning of VAP. <em>NAACL 2025</em>. arXiv:2410.15929</li>
+  <li>Wang et al. (2024). Turn-taking and Backchannel Prediction with Acoustic and LLM Fusion. <em>ICASSP 2024</em>. arXiv:2401.14717</li>
+  <li>Inoue et al. (2024). Multimodal Voice Activity Projection for Turn-taking. <em>IEICE 2024</em>. doi:10.1587/transinf.2024HCP0002</li>
+  <li>Sagatake et al. (2025). Voice Activity Projection Model with Multimodal Encoders. arXiv:2506.03980</li>
+  <li>Elmers et al. (2025). Triadic Multi-party Voice Activity Projection. <em>Interspeech 2025</em>. arXiv:2507.07518</li>
+  <li>Défossez et al. (2024). Moshi: a speech-text foundation model for real-time dialogue. arXiv:2410.00037</li>
+  <li>DualTurn (2026). arXiv:2603.08216</li>
+  <li>arXiv:2505.12654 — MM-F2F: Predicting Turn-Taking and Backchannel. <em>ACL 2025 Findings</em></li>
+  <li>arXiv:2505.21043 — Visual Cues Enhance Predictive Turn-Taking. <em>ACL 2025 Findings</em></li>
+  <li>arXiv:2505.13688 — Gaze-Enhanced Multimodal Turn-Taking. <em>Interspeech 2025</em></li>
+  <li>arXiv:2503.23439 — Speculative End-Turn Detector (SpeculativeETD)</li>
+  <li>arXiv:2509.23938 — Easy Turn: Integrating Acoustic and Linguistic Modalities</li>
+  <li>arXiv:2501.08946 — Applying General Turn-taking Models to HRI (Furhat Robot)</li>
+  <li>Ruede et al. (2017). Yeah, Right, Uh-Huh: A Deep Learning Backchannel Predictor. arXiv:1706.01340</li>
+  <li>Castillo-López et al. (2025). A Survey of Recent Advances on Turn-taking Modeling. <em>IWSDS 2025</em>. ACL Anthology: 2025.iwsds-1.27</li>
+  <li>Skantze (2021). Turn-taking in conversational systems and HRI: a review. <em>Computer Speech &amp; Language</em></li>
+  <li>Gravano &amp; Hirschberg (2011). Turn-Taking Cues in Task-Oriented Dialogue. <em>Computer Speech &amp; Language</em></li>
+  <li>arXiv:2603.25434 — CoDeTT: A Context-aware Dyadic Turn-Taking Benchmark</li>
+  <li>arXiv:2503.04721 — Full-Duplex-Bench</li>
+  <li>arXiv:2509.14515 — From Turn-Taking to Synchronous Dialogue: Full-Duplex Survey</li>
+  <li>arXiv:2409.13726 — Multilingual Dyadic Interaction Corpus NoXi+J</li>
+</ul>
+
+<h3>主要リポジトリ・リソース</h3>
+<ul style="font-size:8.5pt; line-height:1.8;">
+  <li>github.com/ErikEkstedt/VoiceActivityProjection — VAP リファレンス実装</li>
+  <li>github.com/inokoj/VAP-Realtime — リアルタイムVAP実装</li>
+  <li>github.com/ErikEkstedt/TurnGPT — TurnGPT実装</li>
+  <li>github.com/pipecat-ai/smart-turn — Smart Turn（軽量）</li>
+  <li>github.com/ASLP-lab/Easy-Turn — Easy Turn（4状態予測）</li>
+  <li>github.com/latishab/turnsense — TurnSense（Raspberry Pi向け）</li>
+  <li>github.com/kyutai-labs/moshi — Moshi（フルデュプレックス基盤モデル）</li>
+  <li>github.com/sagatake/VAPwithAudioFaceEncoders — 映像統合VAP</li>
+  <li>erikekstedt.github.io/VAP — VAPデモサイト</li>
+  <li>HuggingFace: ASLP-lab/Easy-Turn, kyutai/moshiko-pytorch-bf16, pipecat-ai/smart-turn-v3</li>
+</ul>
+
+<div class="report-footer">
+  It's My Turn — Technical Survey Report | 2026-05-01 | github.com/ksterx/itm
+</div>
+
+</div><!-- /page-content -->
+</body>
+</html>

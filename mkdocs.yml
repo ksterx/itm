@@ -1,0 +1,145 @@
+site_name: It's My Turn
+site_description: Multimodal proactive turn-taking prediction for real-time conversational AI
+site_url: https://ksterx.github.io/itm/
+site_author: ksterx
+repo_name: ksterx/itm
+repo_url: https://github.com/ksterx/itm
+edit_uri: edit/main/docs/
+copyright: Copyright &copy; 2026 ksterx — BSD 2-Clause
+
+docs_dir: docs
+site_dir: site
+
+theme:
+  name: material
+  language: ja
+  font:
+    text: Noto Sans JP
+    code: JetBrains Mono
+  features:
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.indexes
+    - navigation.top
+    - navigation.tracking
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - search.share
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+    - content.action.edit
+    - content.tooltips
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: ダークモードに切替
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: ライトモードに切替
+  icon:
+    repo: fontawesome/brands/github
+    edit: material/pencil
+
+plugins:
+  - search:
+      lang: [ja, en]
+  - git-revision-date-localized:
+      enable_creation_date: true
+      type: date
+      fallback_to_build_date: true
+      enable_git_follow: false
+  - minify:
+      minify_html: true
+
+markdown_extensions:
+  # Python Markdown
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  # PyMdown Extensions
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.betterem
+  - pymdownx.caret
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.mark
+  - pymdownx.smartsymbols
+  - pymdownx.snippets
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.tilde
+
+extra_javascript:
+  - assets/js/mathjax.js
+  - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/ksterx/itm
+  generator: false
+
+nav:
+  - はじめに:
+    - index.md
+    - プロジェクト概要: about/motivation.md
+    - 解く問題: about/problem.md
+    - ロードマップ: about/roadmap.md
+  - 調査・先行研究:
+    - research/overview.md
+    - ターンテイキング 101: research/turn-taking-101.md
+    - 既存モデル: research/existing-models.md
+    - 視覚シグナル: research/visual-cues.md
+    - データセット: research/datasets.md
+    - 関連研究: research/related-work.md
+  - 設計:
+    - design/architecture.md
+    - マルチイベント・ハザード: design/multi-event-hazard.md
+    - ラベル生成: design/label-generation.md
+    - データ戦略: design/data-strategy.md
+    - 新規性: design/novelty.md
+  - 実装:
+    - implementation/environment.md
+    - MaAI ベースライン: implementation/maai-baseline.md
+    - AMI Corpus: implementation/ami-corpus.md
+    - 学習パイプライン: implementation/pipeline.md
+  - 参照:
+    - reference/glossary.md
+    - 論文リスト: reference/papers.md
+    - リソース: reference/resources.md
+  - メタ:
+    - meta/documentation-policy.md
+    - 変更履歴: meta/changelog.md

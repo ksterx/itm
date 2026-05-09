@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+      - name: Install dev deps
+        run: uv pip install --system ruff
+      - name: Ruff check
+        run: ruff check src scripts
+      - name: Ruff format
+        run: ruff format --check src scripts
+
+  test:
+    name: Test (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+      - name: System deps for PyAudio
+        run: sudo apt-get update && sudo apt-get install -y portaudio19-dev
+      - name: Install package
+        run: uv pip install --system -e ".[dev]"
+      - name: Pytest
+        run: |
+          if [ -d tests ]; then
+            pytest -q
+          else
+            echo "No tests yet, skipping"
+          fi
