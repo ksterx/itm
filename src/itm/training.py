@@ -28,6 +28,9 @@ class TrainStepOutput:
     n_observed: dict[EventType, int]
     """Number of bins that contributed to each event's loss."""
 
+    vad_loss: float | None = None
+    """Auxiliary VAD BCE loss when ``use_vad_aux=True``, else ``None``."""
+
 
 def _align_lengths(
     model_t: int,
@@ -43,18 +46,27 @@ def compute_loss(
     target_mask: dict[EventType, torch.Tensor],
     *,
     event_weights: dict[EventType, float] | None = None,
+    pos_weight: float = 1.0,
+    vad_logits: torch.Tensor | None = None,
+    vad_target: torch.Tensor | None = None,
+    vad_loss_weight: float = 1.0,
 ) -> tuple[torch.Tensor, TrainStepOutput]:
-    """Multi-event survival NLL.
+    """Multi-event survival NLL plus optional auxiliary VAD BCE.
 
     Args:
         model_output_logits: ``{ev: (B, T_model, K)}``.
         target_hazard: ``{ev: (B, T_target, K)}`` 0/1 labels.
         target_mask: ``{ev: (B, T_target, K)}`` observed-bin mask.
         event_weights: optional per-event scalar weights (default 1.0).
+        pos_weight: positive-class weight for survival NLL (1.0 = unweighted).
+        vad_logits: ``(B, T_model, 2)`` per-channel VAD logits, or None to skip
+            the VAD auxiliary loss.
+        vad_target: ``(B, T_target, 2)`` 0/1 VAD ground truth, required when
+            ``vad_logits`` is given.
+        vad_loss_weight: scalar weight on the VAD BCE term in the total loss.
 
     Returns:
-        ``(total_loss, TrainStepOutput)``. ``total_loss`` is the (weighted)
-        mean over event types of per-event mean NLLs.
+        ``(total_loss, TrainStepOutput)``.
     """
     if not model_output_logits:
         raise ValueError("No event logits supplied")
@@ -74,18 +86,44 @@ def compute_loss(
         gt_h_a = gt_h[:, :common, :]
         gt_m_a = gt_m[:, :common, :]
 
-        loss_e = survival_nll_loss(logits_a, gt_h_a, gt_m_a, reduction="mean")
+        loss_e = survival_nll_loss(
+            logits_a, gt_h_a, gt_m_a, pos_weight=pos_weight, reduction="mean"
+        )
         weighted = weights[ev] * loss_e
         losses.append(weighted)
         per_event[ev] = loss_e.detach().item()
         n_observed[ev] = int(gt_m_a.sum().item())
 
-    total = torch.stack(losses).mean()
-    return total, TrainStepOutput(
-        total_loss=total.detach().item(),
+    survival_total = torch.stack(losses).mean()
+
+    if vad_logits is not None and vad_target is not None:
+        common = _align_lengths(vad_logits.size(1), vad_target.size(1))
+        vl = vad_logits[:, :common, :]
+        vt = vad_target[:, :common, :].float()
+        vad_bce = torch.nn.functional.binary_cross_entropy_with_logits(vl, vt)
+        total = survival_total + vad_loss_weight * vad_bce
+        return total, TrainStepOutput(
+            total_loss=total.detach().item(),
+            per_event_loss=per_event,
+            n_observed=n_observed,
+            vad_loss=vad_bce.detach().item(),
+        )
+
+    return survival_total, TrainStepOutput(
+        total_loss=survival_total.detach().item(),
         per_event_loss=per_event,
         n_observed=n_observed,
     )
+
+
+def _vad_target_from_batch(batch: dict) -> torch.Tensor | None:
+    """Pull the per-frame VAD target tensor out of a batch dict.
+
+    :class:`itm.data.AMIDataset` populates ``batch["vad_target"]`` with a
+    ``(B, T_target, 2)`` float tensor in {0, 1}. Returns None if absent
+    (e.g. tests that build batches manually without VAD).
+    """
+    return batch.get("vad_target")
 
 
 def train_step(
@@ -94,29 +132,29 @@ def train_step(
     optimizer: torch.optim.Optimizer,
     *,
     event_weights: dict[EventType, float] | None = None,
+    pos_weight: float = 1.0,
+    use_vad_aux: bool = False,
+    vad_loss_weight: float = 1.0,
     max_grad_norm: float | None = 1.0,
 ) -> TrainStepOutput:
-    """Single training step: forward, loss, backward, step.
-
-    Args:
-        model: an :class:`ITMModel`.
-        batch: from :func:`itm.data.ami_collate`.
-        optimizer: torch optimizer.
-        event_weights: per-event weight (defaults to 1.0).
-        max_grad_norm: gradient clipping norm; None to disable.
-
-    Returns:
-        :class:`TrainStepOutput` with per-step loss diagnostics.
-    """
+    """Single training step: forward, loss, backward, step."""
     model.train()
     optimizer.zero_grad(set_to_none=True)
 
-    out = model(batch["audio"])
+    out = model(batch["audio"], return_vad=use_vad_aux)
+
+    vad_logits = out.vad_logits if use_vad_aux else None
+    vad_target = _vad_target_from_batch(batch) if use_vad_aux else None
+
     total_loss, info = compute_loss(
         out.hazard_logits,
         batch["hazard"],
         batch["mask"],
         event_weights=event_weights,
+        pos_weight=pos_weight,
+        vad_logits=vad_logits,
+        vad_target=vad_target,
+        vad_loss_weight=vad_loss_weight,
     )
     total_loss.backward()
     if max_grad_norm is not None:
@@ -126,9 +164,14 @@ def train_step(
 
 
 @torch.no_grad()
-def eval_step(model: ITMModel, batch: dict) -> TrainStepOutput:
+def eval_step(model: ITMModel, batch: dict, *, pos_weight: float = 1.0) -> TrainStepOutput:
     """Single eval step (no grad, no optimizer)."""
     model.eval()
     out = model(batch["audio"])
-    _, info = compute_loss(out.hazard_logits, batch["hazard"], batch["mask"])
+    _, info = compute_loss(
+        out.hazard_logits,
+        batch["hazard"],
+        batch["mask"],
+        pos_weight=pos_weight,
+    )
     return info

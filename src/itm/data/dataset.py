@@ -49,6 +49,8 @@ class _MeetingCache:
     duration_sec: float
     targets_full: dict[EventType, dict[str, torch.Tensor]]
     """Full-meeting hazard/mask tensors at frame_rate_hz."""
+    vad_full: torch.Tensor
+    """Full-meeting per-frame VAD: ``(n_frames_full, 2)`` float32 in {0, 1}."""
 
 
 def _pick_two_most_active(meeting: Meeting) -> tuple[str, str]:
@@ -149,12 +151,23 @@ class AMIDataset(Dataset):
         )
         targets_t = survival_to_tensors(targets, horizon_bins=self.horizon_bins)
 
+        # Build per-frame VAD tensor for the two evaluated speakers.
+        n_frames_full = int(duration * self.frame_rate_hz)
+        vad = torch.zeros(n_frames_full, 2, dtype=torch.float32)
+        dt = 1.0 / self.frame_rate_hz
+        for ch, spk in enumerate(speakers):
+            for seg in meeting.segments_by_speaker.get(spk, []):
+                i_start = max(0, int(seg.start / dt))
+                i_end = min(n_frames_full, int(seg.end / dt) + 1)
+                vad[i_start:i_end, ch] = 1.0
+
         return _MeetingCache(
             meeting_id=meeting_id,
             speakers=speakers,
             audio=audio,
             duration_sec=duration,
             targets_full=targets_t,
+            vad_full=vad,
         )
 
     # -------------------------------------------------------------- Dataset API
@@ -198,10 +211,24 @@ class AMIDataset(Dataset):
                     hazard[ev_type] = pad_h
                     mask[ev_type] = pad_m
 
+        # VAD slice
+        vf_start = f_start
+        vf_end = f_end
+        if vf_end <= cache.vad_full.size(0):
+            vad_slice = cache.vad_full[vf_start:vf_end]
+        else:
+            avail = max(0, cache.vad_full.size(0) - vf_start)
+            pad_v = torch.zeros(vf_end - cache.vad_full.size(0), 2, dtype=torch.float32)
+            if avail > 0:
+                vad_slice = torch.cat([cache.vad_full[vf_start:], pad_v], dim=0)
+            else:
+                vad_slice = pad_v.new_zeros(n_frames_chunk, 2)
+
         return {
             "audio": audio_t,
             "hazard": hazard,
             "mask": mask,
+            "vad_target": vad_slice,
             "meeting": cache.meeting_id,
             "speakers": cache.speakers,
             "start_sec": float(start_sec),
@@ -220,6 +247,7 @@ def ami_collate(batch: list[dict]) -> dict:
         "audio": torch.stack([b["audio"] for b in batch], dim=0),
         "hazard": {},
         "mask": {},
+        "vad_target": torch.stack([b["vad_target"] for b in batch], dim=0),
         "meeting": [b["meeting"] for b in batch],
         "speakers": [b["speakers"] for b in batch],
         "start_sec": torch.tensor([b["start_sec"] for b in batch], dtype=torch.float32),

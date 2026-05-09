@@ -64,6 +64,23 @@ def main() -> None:
         help="Target frame rate (≈ encoder rate, 50 Hz for MaAI)",
     )
     parser.add_argument("--horizon-bins", type=int, default=40)
+    parser.add_argument(
+        "--pos-weight",
+        type=float,
+        default=1.0,
+        help="Positive-class weight for survival NLL (try 30–100 to fight imbalance)",
+    )
+    parser.add_argument(
+        "--use-vad-aux",
+        action="store_true",
+        help="Add per-channel VAD BCE as auxiliary loss to preserve VAD capability",
+    )
+    parser.add_argument("--vad-loss-weight", type=float, default=1.0)
+    parser.add_argument(
+        "--freeze-transformer",
+        action="store_true",
+        help="Freeze ar_channel/ar in the VAP backbone; train only hazard heads (+VAD if used)",
+    )
     parser.add_argument("--device", default="cpu", choices=["cpu", "cuda", "mps"])
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument(
@@ -128,6 +145,7 @@ def main() -> None:
         context_len_sec=20,
         horizon_bins=args.horizon_bins,
         device=args.device,
+        freeze_transformer=args.freeze_transformer,
     )
     model.to(args.device)
     print("Parameter counts:")
@@ -153,12 +171,23 @@ def main() -> None:
         # -------- Train --------
         for _step, batch in enumerate(train_loader):
             batch = _move_batch(batch, args.device)
-            info = train_step(model, batch, optim)
+            info = train_step(
+                model,
+                batch,
+                optim,
+                pos_weight=args.pos_weight,
+                use_vad_aux=args.use_vad_aux,
+                vad_loss_weight=args.vad_loss_weight,
+            )
             global_step += 1
 
             if global_step % args.log_every == 0:
-                msg = f"epoch={epoch} step={global_step} loss={info.total_loss:.4f} " + " ".join(
+                ev_str = " ".join(
                     f"{ev.value}={info.per_event_loss[ev]:.3f}" for ev in info.per_event_loss
+                )
+                vad_str = f" vad={info.vad_loss:.3f}" if info.vad_loss is not None else ""
+                msg = (
+                    f"epoch={epoch} step={global_step} loss={info.total_loss:.4f} {ev_str}{vad_str}"
                 )
                 print(msg)
                 with log_path.open("a") as f:
@@ -170,6 +199,7 @@ def main() -> None:
                                 "step": global_step,
                                 "loss": info.total_loss,
                                 "per_event": {ev.value: v for ev, v in info.per_event_loss.items()},
+                                "vad_loss": info.vad_loss,
                             }
                         )
                         + "\n"
@@ -227,6 +257,8 @@ def _move_batch(batch: dict, device: str) -> dict:
     out["audio"] = batch["audio"].to(device)
     out["hazard"] = {ev: t.to(device) for ev, t in batch["hazard"].items()}
     out["mask"] = {ev: t.to(device) for ev, t in batch["mask"].items()}
+    if "vad_target" in batch:
+        out["vad_target"] = batch["vad_target"].to(device)
     return out
 
 

@@ -38,7 +38,8 @@
 - [x] サバイバルハザード head の実装（`itm.models.ITMModel`）
 - [x] 学習スクリプト + sanity smoke test（loss 単調減少）
 - [x] Phase 2-B v1: 4+1 split で fine-tune → **失敗を確認**（Shift 0%、VAD 崩壊）
-- [ ] **Phase 2-B v2**: pos_weight + VAD 補助損失 + ヘッド先行学習で再挑戦
+- [x] Phase 2-B v2: pos_weight=50 + VAD aux + frozen transformer → **ベースライン微改善**（0.618 vs 0.586）
+- [ ] **Phase 2-B v3**: transformer 部分解凍 + multi-epoch + pos_weight 探索
 - [ ] 既存 VAP_BC、VAP_Nod との比較
 
 ### Phase 3 — 視覚追加

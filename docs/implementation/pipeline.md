@@ -346,6 +346,68 @@ Done. 375 steps in 943.9s
 
 「失敗した」が、実装と評価インフラは完成しており、**問題点が定量的に観察できる状態** に到達した。これが v2 改善の出発点になる。
 
+## Phase 2-B v2: pos_weight + VAD aux + freeze_transformer
+
+v1 の失敗を踏まえた修正：
+
+1. **`survival_nll_loss(pos_weight=...)`** 追加 — クラス不均衡対策
+2. **VAD 補助損失** — `compute_loss(vad_logits=, vad_target=)` が `binary_cross_entropy_with_logits` を返す。`AMIDataset` も `vad_target` を batch に追加
+3. **`--freeze-transformer`** — VAP の transformer 層を凍結し、hazard heads (115K) のみ学習。VAD 能力を保護
+
+### v2 学習結果（pos_weight=50、VAD aux on、frozen transformer）
+
+```
+trainable: 115,704 params
+epoch=0 step=30  loss=1.5365 turn_shift=0.213 backchannel=0.969 overlap=1.438 vad=0.663
+epoch=0 step=180 loss=0.9794 turn_shift=0.287 backchannel=0.149 overlap=0.344 vad=0.719
+epoch=0 step=360 loss=1.0882 turn_shift=0.400 backchannel=0.303 overlap=0.404 vad=0.719
+  [val] epoch=0 loss=0.1572
+
+Done. 375 steps in 779.2s (13 min)
+```
+
+学習対象は heads のみなので、loss スケールは pos_weight の影響で変化（v1 とは比較不可）。
+
+### v2 評価結果（IS1000b、threshold sweep）
+
+| threshold | Hold | Shift | Overall |
+|---|---|---|---|
+| 0.005 〜 0.05 | 0/134 (0%) | **52/52 (100%)** | 0.280（全 SHIFT） |
+| 0.1 | 106/134 (79%) | 9/52 (17%) | **0.618** |
+| 0.2 | 133/134 (99%) | 0/52 (0%) | 0.715 |
+| 0.3 〜 0.5 | 134/134 (100%) | 0/52 (0%) | 0.720（全 HOLD） |
+
+ベースライン MaAI: 0.586 (Hold 64%、Shift 44%)。
+
+### 観察
+
+- **threshold 0.1 で Overall 0.618** ─ ベースライン 0.586 をわずかに上回る
+- **Hold は 79% に向上**（ベースライン 64%）
+- **Shift は 17% に低下**（ベースライン 44%）— トレードオフ
+- しきい値で hold/shift が極端に振れる → モデルの hazard 出力分布が **「ほぼ一様」**で、hold vs shift を識別する情報が出力に乗っていない
+
+### Frame VAD の比較は意味がない
+
+ベースライン eval は `p_now`（VAP 頭部の出力）を使う一方、ITM eval は `va_classifier` の per-channel VAD を使う。両者は意味が異なる出力なので、Frame VAD の数値（baseline 0.933 vs v2 0.510）は **異なる指標** を比較しており、直接比較は無効。フェアな比較には ITM 側にも `p_now` を出力する必要があり、これは v3 の作業項目とする（[deferred: 比較インフラの統一は学習収束後に行う]）。
+
+### v2 の意義
+
+「ベースラインを安定して上回る」には至らなかったが:
+
+- Survival NLL のクラス不均衡問題を pos_weight で部分的に緩和
+- VAD aux loss と凍結により VAP の能力を保護（v1 で起きた崩壊は回避）
+- しきい値しだいで baseline を超えうる構成にはなった
+
+### v3 に向けた次のアクション
+
+| 修正 | 詳細 |
+|---|---|
+| **pos_weight 探索** | 5/10/20/100 を比較。50 は SHIFT 過剰と HOLD 過剰の中間で挙動不安定 |
+| **transformer 部分解凍** | freeze_transformer=False に戻し、ただし学習率を低めに（1e-5 程度）して VAD 能力を保ちつつ AMI に適応 |
+| **複数 epoch** | 1 epoch では不十分の可能性。3〜5 epoch で再訓練 |
+| **`p_now` を ITM から出力** | フェアな Frame VAD 比較のため（[deferred: v3]） |
+| **Shift 専用の訓練 signal** | mutual silence の gt_label と直接結びつくラベル（survival とは別）も併用
+
 ## 関連ページ
 
 - [v1 アーキテクチャ](../design/architecture.md) — モデル設計

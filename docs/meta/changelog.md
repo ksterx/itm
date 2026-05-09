@@ -6,6 +6,21 @@
 
 ## 2026-05-10
 
+### Phase 2-B v2 評価: ベースラインをわずかに上回る (0.618 vs 0.586)
+
+修正（pos_weight=50、VAD aux loss、`--freeze-transformer` で hazard heads のみ学習）後:
+
+- **threshold=0.1 で Overall 0.618**（ベースライン 0.586 上回る）
+- Hold accuracy 0.791（baseline 0.642 より改善）
+- Shift accuracy 0.173（baseline 0.442 より悪化、トレードオフ）
+
+しきい値で挙動が極端に振れる（0.05 以下で全 SHIFT、0.2 以上で全 HOLD）。
+モデル出力分布が hold vs shift を強く区別できていない。
+
+v3 で transformer 部分解凍 + multi-epoch + pos_weight 探索を実施予定。
+
+詳細は [学習パイプライン](../implementation/pipeline.md#phase-2-b-v2-pos_weight--vad-aux--freeze_transformer)。
+
 ### Phase 2-B v1 評価: 失敗を確認、原因特定
 
 `scripts/eval_itm_on_ami.py` で IS1000b に対する hold/shift accuracy を測定:

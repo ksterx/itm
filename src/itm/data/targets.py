@@ -87,6 +87,7 @@ def survival_nll_loss(
     target_hazard: torch.Tensor,
     mask: torch.Tensor,
     *,
+    pos_weight: float = 1.0,
     eps: float = 1e-7,
     reduction: str = "mean",
 ) -> torch.Tensor:
@@ -96,6 +97,10 @@ def survival_nll_loss(
         hazard_logits: Float[..., K] — pre-sigmoid logits.
         target_hazard: Long/Float[..., K] — 1 at the event bin, 0 elsewhere.
         mask: Float[..., K] — 1 where the bin contributes, 0 otherwise.
+        pos_weight: scalar multiplier applied to the positive-class log term.
+            Use values > 1 to counteract the heavy negative imbalance of
+            survival labels (most bins are observed-but-no-event, so the model
+            otherwise collapses to ``predict h ≈ 0``).
         reduction: ``"mean"`` over masked entries, ``"sum"``, or ``"none"``.
 
     Returns:
@@ -105,8 +110,8 @@ def survival_nll_loss(
     target_f = target_hazard.to(p.dtype)
     log_p = torch.log(p.clamp_min(eps))
     log_1mp = torch.log((1.0 - p).clamp_min(eps))
-    # log h on event bin, log(1 - h) on observed-but-not-event bins
-    per_entry = -(target_f * log_p + (1.0 - target_f) * log_1mp) * mask
+    # weighted log h on event bin, log(1 - h) on observed-but-not-event bins
+    per_entry = -(pos_weight * target_f * log_p + (1.0 - target_f) * log_1mp) * mask
 
     if reduction == "none":
         return per_entry
