@@ -6,6 +6,22 @@
 
 ## 2026-05-10
 
+### Phase 2-B：ITM モデル + 学習スクリプト実装
+
+- `src/itm/models/itm_model.py`: VAP backbone (MaAI) + 3 hazard heads
+  + freeze encoder option。`build_itm_model()` ヘルパで MaAI 重み読み込み
+- `src/itm/training.py`: `compute_loss` (multi-event survival NLL),
+  `train_step`, `eval_step`
+- `scripts/train_itm.py`: AMIDataset → DataLoader → 学習ループ →
+  checkpoint。`--all`, `--max-steps`, `--device {cpu,cuda,mps}` 等の CLI
+- 動作確認: CPU 8 step で loss 0.65 → 0.50 と単調減少
+- パラメータ数: total 8.1M, trainable 3.7M (CPC encoder frozen)
+
+ユニットテストを追加（合計 48 件）。`@pytest.mark.slow` で MaAI 重みを
+ロードする統合テストを切り分け、CI でデフォルトはスキップ。
+
+詳細は [学習パイプライン](../implementation/pipeline.md#itm-モデル--学習スクリプトphase-2-b-実装)。
+
 ### Phase 2 基盤：データ・学習パイプライン実装
 
 `src/itm/data/` に学習基盤を整備:

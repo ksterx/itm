@@ -167,6 +167,106 @@ Dataset size: 983 chunks
 2. **マルチイベント学習**: turn-shift / backchannel / overlap 同時最適化
 3. **校正**: `survival_nll_loss` の reduction="none" を使った per-bin 校正性指標の計算
 
+---
+
+## ITM モデル + 学習スクリプト（Phase 2-B 実装）
+
+### `itm.models.ITMModel`
+
+VAP backbone + 3 ハザード head の構成。
+
+```mermaid
+flowchart LR
+    A[audio (B, T_samples, 2)] --> ENC[CPC Encoder ×2<br/>frozen]
+    ENC --> AR1[ar_channel ch1]
+    ENC --> AR2[ar_channel ch2]
+    AR1 --> CR[ar Cross-Attention<br/>trainable]
+    AR2 --> CR
+    CR --> H[hidden state h<br/>(B, T_enc, dim=256)]
+    H --> H1[hazard head turn_shift]
+    H --> H2[hazard head backchannel]
+    H --> H3[hazard head overlap]
+    H1 --> O1[hazard_logits<br/>(B, T_enc, K=40)]
+    H2 --> O2[(B, T_enc, K=40)]
+    H3 --> O3[(B, T_enc, K=40)]
+```
+
+```python
+from itm.models import build_itm_model
+
+model = build_itm_model(
+    lang="en",
+    frame_rate=20,
+    context_len_sec=20,
+    horizon_bins=40,
+    freeze_encoder=True,         # CPC エンコーダはフリーズ
+    freeze_transformer=False,    # ar_channel/ar は AMI で fine-tune
+)
+print(model.count_parameters())
+# {'total': 8_072_725, 'trainable': 3_726_841, 'encoder': 4_343_808,
+#  'hazard_heads': 115_704, 'transformer': 3_613_213}
+```
+
+**重要**: CPC エンコーダは内部的に **~50 Hz** でフレームを出力するため、`audio` を 20s 渡すと `hazard_logits` は約 ~997 フレーム（B, 997, K）になる。学習データの target も `frame_rate_hz=50` で生成して長さを揃えるのが推奨。
+
+### 学習ループ
+
+```python
+from itm.training import train_step
+from itm.data import AMIDataset, ami_collate
+from torch.utils.data import DataLoader
+import torch
+
+train_ds = AMIDataset(annot_root, audio_root, ["ES2002b", "ES2002c", "IS1000a", "IS1000b"],
+                     chunk_sec=20.0, hop_sec=10.0, frame_rate_hz=50, horizon_bins=40)
+loader = DataLoader(train_ds, batch_size=2, shuffle=True, collate_fn=ami_collate)
+
+optim = torch.optim.AdamW(
+    [p for p in model.parameters() if p.requires_grad],
+    lr=3.63e-4, weight_decay=1e-3,
+)
+for batch in loader:
+    info = train_step(model, batch, optim)
+    print(info.total_loss)
+```
+
+長さ不一致（model 997 vs target 1000 など）は ``compute_loss`` 内で短い方に切り詰められる。
+
+### CLI スクリプト
+
+```bash
+# Sanity smoke test (1 meeting, 8 steps)
+python scripts/train_itm.py --meetings ES2002a --epochs 1 --batch-size 2 --max-steps 8
+
+# Full Phase 2-B training (5 meetings, multi-epoch)
+python scripts/train_itm.py --all --epochs 8 --batch-size 4 --device cuda
+```
+
+学習履歴は `checkpoints/itm_phase2b_log.jsonl`、checkpoint は
+`checkpoints/itm_phase2b_epoch{NN}.pt` に保存。`val_loss` 最良の epoch は
+`itm_phase2b_best.pt` にコピーされる。
+
+### CPU での実行可否
+
+M4 MacBook で sanity 動作確認済み:
+
+```
+Building datasets...
+train: 126 chunks   val: 63 chunks
+Building model (frame_rate=20, device=cpu)...
+Parameter counts:
+  total            8,072,725
+  trainable        3,726,841
+  ...
+epoch=0 step=2 loss=0.6546 turn_shift=0.657 backchannel=0.639 overlap=0.668
+epoch=0 step=4 loss=0.5888 turn_shift=0.597 backchannel=0.569 overlap=0.601
+epoch=0 step=6 loss=0.5395 turn_shift=0.551 backchannel=0.510 overlap=0.558
+epoch=0 step=8 loss=0.4985 turn_shift=0.512 backchannel=0.469 overlap=0.514
+Done. 8 steps in 19.8s
+```
+
+CPU 1 step ≈ 2.5s（batch=2、chunk=20s）。GPU で 5 〜 10 倍高速化を見込む。
+
 ## 関連ページ
 
 - [v1 アーキテクチャ](../design/architecture.md) — モデル設計

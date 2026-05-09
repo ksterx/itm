@@ -33,9 +33,11 @@
 
 期間: 約 2 週間
 
-- [ ] AMI dialog act → ITM event のラベル変換実装（[ラベル生成](../design/label-generation.md)）
-- [ ] サバイバルハザード head の実装
-- [ ] AMI で fine-tune
+- [x] AMI dialog act → ITM event のラベル変換実装（[ラベル生成](../design/label-generation.md)）
+- [x] データ層: AMIDataset + survival NLL 損失
+- [x] サバイバルハザード head の実装（`itm.models.ITMModel`）
+- [x] 学習スクリプト + sanity smoke test（loss 単調減少）
+- [ ] AMI で本格 fine-tune（5 meetings, 数 epoch）
 - [ ] 既存 VAP_BC、VAP_Nod との比較
 
 ### Phase 3 — 視覚追加
