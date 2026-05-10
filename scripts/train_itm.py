@@ -81,6 +81,18 @@ def main() -> None:
         action="store_true",
         help="Freeze ar_channel/ar in the VAP backbone; train only hazard heads (+VAD if used)",
     )
+    parser.add_argument(
+        "--use-shift-head",
+        action="store_true",
+        help="Add a dedicated binary Shift head (BCE on silence frames). v4 design.",
+    )
+    parser.add_argument("--shift-loss-weight", type=float, default=1.0)
+    parser.add_argument(
+        "--shift-pos-weight",
+        type=float,
+        default=2.0,
+        help="Positive-class weight for shift BCE (hold:shift ratio is roughly 2.5:1 in AMI)",
+    )
     parser.add_argument("--device", default="cpu", choices=["cpu", "cuda", "mps"])
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument(
@@ -146,6 +158,7 @@ def main() -> None:
         horizon_bins=args.horizon_bins,
         device=args.device,
         freeze_transformer=args.freeze_transformer,
+        enable_shift_head=args.use_shift_head,
     )
     model.to(args.device)
     print("Parameter counts:")
@@ -178,6 +191,9 @@ def main() -> None:
                 pos_weight=args.pos_weight,
                 use_vad_aux=args.use_vad_aux,
                 vad_loss_weight=args.vad_loss_weight,
+                use_shift_head=args.use_shift_head,
+                shift_loss_weight=args.shift_loss_weight,
+                shift_pos_weight=args.shift_pos_weight,
             )
             global_step += 1
 
@@ -186,8 +202,10 @@ def main() -> None:
                     f"{ev.value}={info.per_event_loss[ev]:.3f}" for ev in info.per_event_loss
                 )
                 vad_str = f" vad={info.vad_loss:.3f}" if info.vad_loss is not None else ""
+                shift_str = f" shift={info.shift_loss:.3f}" if info.shift_loss is not None else ""
                 msg = (
-                    f"epoch={epoch} step={global_step} loss={info.total_loss:.4f} {ev_str}{vad_str}"
+                    f"epoch={epoch} step={global_step} loss={info.total_loss:.4f} "
+                    f"{ev_str}{vad_str}{shift_str}"
                 )
                 print(msg)
                 with log_path.open("a") as f:
@@ -200,6 +218,7 @@ def main() -> None:
                                 "loss": info.total_loss,
                                 "per_event": {ev.value: v for ev, v in info.per_event_loss.items()},
                                 "vad_loss": info.vad_loss,
+                                "shift_loss": info.shift_loss,
                             }
                         )
                         + "\n"
@@ -215,7 +234,13 @@ def main() -> None:
         val_losses: list[float] = []
         for batch in val_loader:
             batch = _move_batch(batch, args.device)
-            info = eval_step(model, batch)
+            info = eval_step(
+                model,
+                batch,
+                use_shift_head=args.use_shift_head,
+                shift_loss_weight=args.shift_loss_weight,
+                shift_pos_weight=args.shift_pos_weight,
+            )
             val_losses.append(info.total_loss)
         val_loss = sum(val_losses) / max(1, len(val_losses))
         print(f"  [val] epoch={epoch} loss={val_loss:.4f}  (n_batches={len(val_losses)})")
@@ -259,6 +284,10 @@ def _move_batch(batch: dict, device: str) -> dict:
     out["mask"] = {ev: t.to(device) for ev, t in batch["mask"].items()}
     if "vad_target" in batch:
         out["vad_target"] = batch["vad_target"].to(device)
+    if "shift_target" in batch:
+        out["shift_target"] = batch["shift_target"].to(device)
+    if "shift_mask" in batch:
+        out["shift_mask"] = batch["shift_mask"].to(device)
     return out
 
 

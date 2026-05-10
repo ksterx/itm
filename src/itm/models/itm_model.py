@@ -66,6 +66,9 @@ class ITMOutput:
     vad_logits: torch.Tensor | None
     """Per-channel VAD logits ``(B, T_enc, 2)`` if ``return_vad`` else ``None``."""
 
+    shift_logits: torch.Tensor | None
+    """Per-frame shift logits ``(B, T_enc)`` if the model has a shift head."""
+
     encoder_frame_rate_hz: float
     """Effective output frame rate of the model (~50 Hz for MaAI VAP)."""
 
@@ -93,6 +96,7 @@ class ITMModel(nn.Module):
         head_hidden: int = 128,
         freeze_encoder: bool = True,
         freeze_transformer: bool = False,
+        enable_shift_head: bool = False,
     ) -> None:
         super().__init__()
         from itm.data.labels import EventType as _EventType
@@ -115,6 +119,21 @@ class ITMModel(nn.Module):
                 for ev in self._event_types
             }
         )
+
+        # Optional dedicated Shift head (binary, trained with BCE on silence frames).
+        # Survival NLL alone has not produced useful shift discrimination
+        # (v2/v3 measured ROC-AUC ≈ 0.5, baseline ≈ 0.7); a discriminative
+        # head provides a direct gradient pathway for the eval task.
+        self.shift_head: nn.Sequential | None
+        if enable_shift_head:
+            self.shift_head = nn.Sequential(
+                nn.LayerNorm(dim),
+                nn.Linear(dim, head_hidden),
+                nn.GELU(),
+                nn.Linear(head_hidden, 1),
+            )
+        else:
+            self.shift_head = None
 
         if freeze_encoder:
             for enc in (self.backbone.encoder1, self.backbone.encoder2):
@@ -185,6 +204,10 @@ class ITMModel(nn.Module):
             vad2 = self.backbone.va_classifier(o2["x"]).squeeze(-1)
             vad_logits = torch.stack([vad1, vad2], dim=-1)  # (B, T_enc, 2)
 
+        shift_logits: torch.Tensor | None = None
+        if self.shift_head is not None:
+            shift_logits = self.shift_head(h).squeeze(-1)  # (B, T_enc)
+
         # Estimate encoder frame rate from output length and audio duration
         sr_audio = audio.size(1)
         t_enc = h.size(1)
@@ -195,6 +218,7 @@ class ITMModel(nn.Module):
         return ITMOutput(
             hazard_logits=hazard_logits,
             vad_logits=vad_logits,
+            shift_logits=shift_logits,
             encoder_frame_rate_hz=float(frame_rate),
         )
 
@@ -232,6 +256,7 @@ def build_itm_model(
     head_hidden: int = 128,
     freeze_encoder: bool = True,
     freeze_transformer: bool = False,
+    enable_shift_head: bool = False,
     device: str = "cpu",
 ) -> ITMModel:
     """Construct an :class:`ITMModel` initialized from a MaAI pretrained VAP.
@@ -268,4 +293,5 @@ def build_itm_model(
         head_hidden=head_hidden,
         freeze_encoder=freeze_encoder,
         freeze_transformer=freeze_transformer,
+        enable_shift_head=enable_shift_head,
     )

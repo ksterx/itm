@@ -31,6 +31,9 @@ class TrainStepOutput:
     vad_loss: float | None = None
     """Auxiliary VAD BCE loss when ``use_vad_aux=True``, else ``None``."""
 
+    shift_loss: float | None = None
+    """Shift-head BCE loss when the model has a shift head and labels are present."""
+
 
 def _align_lengths(
     model_t: int,
@@ -50,6 +53,11 @@ def compute_loss(
     vad_logits: torch.Tensor | None = None,
     vad_target: torch.Tensor | None = None,
     vad_loss_weight: float = 1.0,
+    shift_logits: torch.Tensor | None = None,
+    shift_target: torch.Tensor | None = None,
+    shift_mask: torch.Tensor | None = None,
+    shift_loss_weight: float = 1.0,
+    shift_pos_weight: float = 1.0,
 ) -> tuple[torch.Tensor, TrainStepOutput]:
     """Multi-event survival NLL plus optional auxiliary VAD BCE.
 
@@ -95,24 +103,38 @@ def compute_loss(
         n_observed[ev] = int(gt_m_a.sum().item())
 
     survival_total = torch.stack(losses).mean()
+    total = survival_total
 
+    vad_loss_value: float | None = None
     if vad_logits is not None and vad_target is not None:
         common = _align_lengths(vad_logits.size(1), vad_target.size(1))
         vl = vad_logits[:, :common, :]
         vt = vad_target[:, :common, :].float()
         vad_bce = torch.nn.functional.binary_cross_entropy_with_logits(vl, vt)
-        total = survival_total + vad_loss_weight * vad_bce
-        return total, TrainStepOutput(
-            total_loss=total.detach().item(),
-            per_event_loss=per_event,
-            n_observed=n_observed,
-            vad_loss=vad_bce.detach().item(),
-        )
+        total = total + vad_loss_weight * vad_bce
+        vad_loss_value = vad_bce.detach().item()
 
-    return survival_total, TrainStepOutput(
-        total_loss=survival_total.detach().item(),
+    shift_loss_value: float | None = None
+    if shift_logits is not None and shift_target is not None and shift_mask is not None:
+        common = _align_lengths(shift_logits.size(1), shift_target.size(1))
+        sl = shift_logits[:, :common]
+        st = shift_target[:, :common].float()
+        sm = shift_mask[:, :common].float()
+        if sm.sum() > 0:
+            pos_w = torch.tensor(shift_pos_weight, device=sl.device, dtype=sl.dtype)
+            elem = torch.nn.functional.binary_cross_entropy_with_logits(
+                sl, st, pos_weight=pos_w, reduction="none"
+            )
+            shift_bce = (elem * sm).sum() / sm.sum().clamp(min=1.0)
+            total = total + shift_loss_weight * shift_bce
+            shift_loss_value = shift_bce.detach().item()
+
+    return total, TrainStepOutput(
+        total_loss=total.detach().item(),
         per_event_loss=per_event,
         n_observed=n_observed,
+        vad_loss=vad_loss_value,
+        shift_loss=shift_loss_value,
     )
 
 
@@ -135,6 +157,9 @@ def train_step(
     pos_weight: float = 1.0,
     use_vad_aux: bool = False,
     vad_loss_weight: float = 1.0,
+    use_shift_head: bool = False,
+    shift_loss_weight: float = 1.0,
+    shift_pos_weight: float = 1.0,
     max_grad_norm: float | None = 1.0,
 ) -> TrainStepOutput:
     """Single training step: forward, loss, backward, step."""
@@ -146,6 +171,10 @@ def train_step(
     vad_logits = out.vad_logits if use_vad_aux else None
     vad_target = _vad_target_from_batch(batch) if use_vad_aux else None
 
+    shift_logits = out.shift_logits if use_shift_head else None
+    shift_target = batch.get("shift_target") if use_shift_head else None
+    shift_mask = batch.get("shift_mask") if use_shift_head else None
+
     total_loss, info = compute_loss(
         out.hazard_logits,
         batch["hazard"],
@@ -155,6 +184,11 @@ def train_step(
         vad_logits=vad_logits,
         vad_target=vad_target,
         vad_loss_weight=vad_loss_weight,
+        shift_logits=shift_logits,
+        shift_target=shift_target,
+        shift_mask=shift_mask,
+        shift_loss_weight=shift_loss_weight,
+        shift_pos_weight=shift_pos_weight,
     )
     total_loss.backward()
     if max_grad_norm is not None:
@@ -164,14 +198,30 @@ def train_step(
 
 
 @torch.no_grad()
-def eval_step(model: ITMModel, batch: dict, *, pos_weight: float = 1.0) -> TrainStepOutput:
+def eval_step(
+    model: ITMModel,
+    batch: dict,
+    *,
+    pos_weight: float = 1.0,
+    use_shift_head: bool = False,
+    shift_loss_weight: float = 1.0,
+    shift_pos_weight: float = 1.0,
+) -> TrainStepOutput:
     """Single eval step (no grad, no optimizer)."""
     model.eval()
     out = model(batch["audio"])
+    shift_logits = out.shift_logits if use_shift_head else None
+    shift_target = batch.get("shift_target") if use_shift_head else None
+    shift_mask = batch.get("shift_mask") if use_shift_head else None
     _, info = compute_loss(
         out.hazard_logits,
         batch["hazard"],
         batch["mask"],
         pos_weight=pos_weight,
+        shift_logits=shift_logits,
+        shift_target=shift_target,
+        shift_mask=shift_mask,
+        shift_loss_weight=shift_loss_weight,
+        shift_pos_weight=shift_pos_weight,
     )
     return info

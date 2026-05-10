@@ -106,7 +106,8 @@ def run_meeting_inference(
     target_frame_rate: int,
     horizon_bins: int,
     device: str,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
+    """Returns (hazard, vad, shift_prob_or_None)."""
     ds = AMIDataset(
         ANNOT_ROOT,
         AUDIO_ROOT,
@@ -120,8 +121,10 @@ def run_meeting_inference(
 
     hazard_chunks: list[np.ndarray] = []
     vad_chunks: list[np.ndarray] = []
+    shift_chunks: list[np.ndarray] = []
 
     model.eval()
+    has_shift = False
     for batch in loader:
         audio = batch["audio"].to(device)
         out = model(audio, return_vad=True)
@@ -129,10 +132,14 @@ def run_meeting_inference(
         v = out.vad_logits.sigmoid().cpu().numpy()
         hazard_chunks.append(h_turn[0])
         vad_chunks.append(v[0])
+        if out.shift_logits is not None:
+            has_shift = True
+            shift_chunks.append(out.shift_logits.sigmoid().cpu().numpy()[0])
 
     hazards = np.concatenate(hazard_chunks, axis=0)
     vads = np.concatenate(vad_chunks, axis=0)
-    return hazards, vads
+    shift_probs = np.concatenate(shift_chunks, axis=0) if has_shift else None
+    return hazards, vads, shift_probs
 
 
 def gt_vad_for_meeting(meeting_id: str, target_frame_rate: int) -> tuple[np.ndarray, float]:
@@ -158,11 +165,19 @@ def collect_silence_scores(
     hazards: np.ndarray,
     gt_vad: np.ndarray,
     target_frame_rate: int,
+    shift_probs: np.ndarray | None = None,
 ) -> list[tuple[str, float]]:
-    """For each well-defined mutual silence: return (gt_label, max_hazard_score)."""
+    """For each well-defined mutual silence: return (gt_label, score).
+
+    Score is mean(shift_prob) over silence frames if a shift head is present
+    (v4); otherwise max(turn_hazard) over the lookahead window at the
+    silence midpoint (v1–v3).
+    """
     n = min(len(hazards), len(gt_vad))
     hazards = hazards[:n]
     gt_vad = gt_vad[:n]
+    if shift_probs is not None:
+        shift_probs = shift_probs[:n]
     silences = find_mutual_silences_from_vad(gt_vad, target_frame_rate)
     pairs: list[tuple[str, float]] = []
     for i_s, i_e in silences:
@@ -172,8 +187,11 @@ def collect_silence_scores(
         mid = (i_s + i_e) // 2
         if mid >= n:
             continue
-        max_h = float(hazards[mid, :LOOKAHEAD_BINS].max())
-        pairs.append((gt_label, max_h))
+        if shift_probs is not None:
+            score = float(shift_probs[i_s : max(i_s + 1, i_e)].mean())
+        else:
+            score = float(hazards[mid, :LOOKAHEAD_BINS].max())
+        pairs.append((gt_label, score))
     return pairs
 
 
@@ -255,7 +273,7 @@ def evaluate_meeting(
 ) -> dict:
     """Run inference once, return scores + frame VAD accuracy."""
     print(f"\n--- inference: {meeting_id} ---")
-    hazards, vads_pred = run_meeting_inference(
+    hazards, vads_pred, shift_probs = run_meeting_inference(
         model,
         meeting_id,
         chunk_sec=chunk_sec,
@@ -268,6 +286,8 @@ def evaluate_meeting(
     hazards = hazards[:n]
     vads_pred = vads_pred[:n]
     gt_vad = gt_vad[:n]
+    if shift_probs is not None:
+        shift_probs = shift_probs[:n]
 
     single_mask = gt_vad[:, 0] ^ gt_vad[:, 1]
     if single_mask.sum() > 0:
@@ -277,12 +297,15 @@ def evaluate_meeting(
     else:
         frame_acc = float("nan")
 
-    pairs = collect_silence_scores(hazards, gt_vad, target_frame_rate)
+    pairs = collect_silence_scores(hazards, gt_vad, target_frame_rate, shift_probs=shift_probs)
+    score_source = "shift_head.mean(silence)" if shift_probs is not None else "max(hazard[:K])"
+    print(f"  score source: {score_source}")
     return {
         "meeting": meeting_id,
         "duration_sec": duration_sec,
         "frame_acc": frame_acc,
         "pairs": pairs,
+        "score_source": score_source,
     }
 
 
@@ -355,12 +378,16 @@ def main() -> None:
     ckpt = torch.load(args.checkpoint, map_location=args.device, weights_only=False)
     print(f"  epoch={ckpt['epoch']}, val_loss={ckpt.get('val_loss', '-')}")
     train_args = ckpt.get("args", {})
+    has_shift_head = any(k.startswith("shift_head.") for k in ckpt["model_state"])
+    if has_shift_head:
+        print("  checkpoint contains shift_head — enabling")
     model = build_itm_model(
         lang="en",
         frame_rate=train_args.get("frame_rate", 20),
         context_len_sec=20,
         horizon_bins=args.horizon_bins,
         device=args.device,
+        enable_shift_head=has_shift_head,
     )
     missing, unexpected = model.load_state_dict(ckpt["model_state"], strict=False)
     if missing or unexpected:

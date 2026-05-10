@@ -216,6 +216,59 @@ class TestAMIDataset:
         # Speakers should include both A and B (the only two)
         assert set(item["speakers"]) == {"A", "B"}
 
+    def test_shift_target_shape_and_mask(self, fake_corpus: tuple[Path, Path]) -> None:
+        annot_root, audio_root = fake_corpus
+        ds = AMIDataset(
+            annot_root,
+            audio_root,
+            meeting_ids=["MEET01"],
+            chunk_sec=10.0,
+            hop_sec=10.0,
+            frame_rate_hz=20,
+            horizon_bins=40,
+            speakers_override={"MEET01": ("A", "B")},
+        )
+        item = ds[0]
+        assert "shift_target" in item
+        assert "shift_mask" in item
+        assert item["shift_target"].shape == (10 * 20,)
+        assert item["shift_mask"].shape == (10 * 20,)
+        # Mask values must be 0 or 1
+        assert torch.all((item["shift_mask"] == 0) | (item["shift_mask"] == 1))
+        # Where mask is 0, target must also be 0
+        assert torch.all(item["shift_target"][item["shift_mask"] == 0] == 0)
+
+    def test_compute_shift_targets_unit(self) -> None:
+        from itm.data.dataset import _compute_shift_targets
+
+        # 100 frames at 20 Hz = 5s.
+        # Frames 0-39: speaker 0 (channel 0 active, 1 silent)
+        # Frames 40-69: BOTH silent (mutual silence, 1.5s ≥ 0.2s)
+        # Frames 70-99: speaker 1 (channel 1 active) → SHIFT
+        vad = torch.zeros(100, 2)
+        vad[0:40, 0] = 1.0
+        vad[70:100, 1] = 1.0
+        target, mask = _compute_shift_targets(vad, frame_rate=20)
+        assert mask[40:70].sum() == 30, "expected mask=1 over silence frames"
+        assert target[40:70].sum() == 30, "shift case should give target=1 over silence"
+        assert mask[:40].sum() == 0  # outside silence
+        assert mask[70:].sum() == 0
+
+        # Hold case: speaker 0 resumes after silence
+        vad = torch.zeros(100, 2)
+        vad[0:40, 0] = 1.0
+        vad[70:100, 0] = 1.0
+        target, mask = _compute_shift_targets(vad, frame_rate=20)
+        assert mask[40:70].sum() == 30
+        assert target[40:70].sum() == 0  # hold → target stays 0
+
+        # Silence too short (< 0.2s = 4 frames) → no labelable boundary
+        vad = torch.zeros(100, 2)
+        vad[0:40, 0] = 1.0
+        vad[42:100, 1] = 1.0  # only 2-frame gap, below 0.2s threshold
+        target, mask = _compute_shift_targets(vad, frame_rate=20)
+        assert mask.sum() == 0
+
     def test_targets_have_some_events(self, fake_corpus: tuple[Path, Path]) -> None:
         annot_root, audio_root = fake_corpus
         ds = AMIDataset(

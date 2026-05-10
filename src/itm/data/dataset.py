@@ -51,12 +51,82 @@ class _MeetingCache:
     """Full-meeting hazard/mask tensors at frame_rate_hz."""
     vad_full: torch.Tensor
     """Full-meeting per-frame VAD: ``(n_frames_full, 2)`` float32 in {0, 1}."""
+    shift_target_full: torch.Tensor
+    """Full-meeting shift labels: ``(n_frames_full,)`` float32 in {0, 1}.
+
+    1 if the surrounding mutual silence ends with a different speaker
+    (turn shift), 0 if the same speaker resumes (hold). Frames outside a
+    well-defined silence boundary are 0 and ``shift_mask_full`` is 0 there.
+    """
+    shift_mask_full: torch.Tensor
+    """``(n_frames_full,)`` float32 — 1 only on frames inside a labelable silence."""
 
 
 def _pick_two_most_active(meeting: Meeting) -> tuple[str, str]:
     talk = {spk: sum(s.duration for s in segs) for spk, segs in meeting.segments_by_speaker.items()}
     ranked = sorted(talk.items(), key=lambda kv: -kv[1])
     return ranked[0][0], ranked[1][0]
+
+
+def _compute_shift_targets(
+    vad: torch.Tensor,
+    frame_rate: int,
+    *,
+    min_silence_sec: float = 0.2,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Per-frame shift labels and mask from a 2-channel VAD tensor.
+
+    For each mutual silence ≥ ``min_silence_sec`` flanked on both sides by a
+    well-defined single-speaker frame:
+      - shift_target = 1 if next single-speaker ≠ previous single-speaker
+      - shift_target = 0 otherwise (hold)
+      - shift_mask = 1 inside the silence; 0 elsewhere
+
+    Returns:
+        (shift_target, shift_mask), both ``(n_frames,)`` float32.
+    """
+    n = vad.size(0)
+    target = torch.zeros(n, dtype=torch.float32)
+    mask = torch.zeros(n, dtype=torch.float32)
+    if n == 0:
+        return target, mask
+
+    silent = (vad[:, 0] + vad[:, 1]) == 0  # bool, (n,)
+    min_frames = int(min_silence_sec * frame_rate)
+
+    i = 0
+    while i < n:
+        if not silent[i].item():
+            i += 1
+            continue
+        j = i
+        while j < n and silent[j].item():
+            j += 1
+        if (j - i) >= min_frames:
+            # Look back for last single-speaker frame
+            prev_ch: int | None = None
+            for k in range(i - 1, -1, -1):
+                if vad[k, 0] > 0 and vad[k, 1] == 0:
+                    prev_ch = 0
+                    break
+                if vad[k, 1] > 0 and vad[k, 0] == 0:
+                    prev_ch = 1
+                    break
+            next_ch: int | None = None
+            for k in range(j, n):
+                if vad[k, 0] > 0 and vad[k, 1] == 0:
+                    next_ch = 0
+                    break
+                if vad[k, 1] > 0 and vad[k, 0] == 0:
+                    next_ch = 1
+                    break
+            if prev_ch is not None and next_ch is not None:
+                label = 0.0 if prev_ch == next_ch else 1.0
+                mask[i:j] = 1.0
+                if label > 0:
+                    target[i:j] = 1.0
+        i = j
+    return target, mask
 
 
 class AMIDataset(Dataset):
@@ -161,6 +231,8 @@ class AMIDataset(Dataset):
                 i_end = min(n_frames_full, int(seg.end / dt) + 1)
                 vad[i_start:i_end, ch] = 1.0
 
+        shift_target_full, shift_mask_full = _compute_shift_targets(vad, self.frame_rate_hz)
+
         return _MeetingCache(
             meeting_id=meeting_id,
             speakers=speakers,
@@ -168,6 +240,8 @@ class AMIDataset(Dataset):
             duration_sec=duration,
             targets_full=targets_t,
             vad_full=vad,
+            shift_target_full=shift_target_full,
+            shift_mask_full=shift_mask_full,
         )
 
     # -------------------------------------------------------------- Dataset API
@@ -224,15 +298,32 @@ class AMIDataset(Dataset):
             else:
                 vad_slice = pad_v.new_zeros(n_frames_chunk, 2)
 
+        # Shift target / mask slice (1-D, length n_frames_chunk)
+        shift_target_slice = self._slice_1d(cache.shift_target_full, f_start, f_end, n_frames_chunk)
+        shift_mask_slice = self._slice_1d(cache.shift_mask_full, f_start, f_end, n_frames_chunk)
+
         return {
             "audio": audio_t,
             "hazard": hazard,
             "mask": mask,
             "vad_target": vad_slice,
+            "shift_target": shift_target_slice,
+            "shift_mask": shift_mask_slice,
             "meeting": cache.meeting_id,
             "speakers": cache.speakers,
             "start_sec": float(start_sec),
         }
+
+    @staticmethod
+    def _slice_1d(full: torch.Tensor, f_start: int, f_end: int, n_chunk: int) -> torch.Tensor:
+        if f_end <= full.size(0):
+            return full[f_start:f_end]
+        avail = max(0, full.size(0) - f_start)
+        pad_len = f_end - full.size(0)
+        pad = torch.zeros(pad_len, dtype=full.dtype)
+        if avail > 0:
+            return torch.cat([full[f_start:], pad], dim=0)
+        return torch.zeros(n_chunk, dtype=full.dtype)
 
 
 # ---------------------------------------------------------------- collate fn
@@ -248,6 +339,8 @@ def ami_collate(batch: list[dict]) -> dict:
         "hazard": {},
         "mask": {},
         "vad_target": torch.stack([b["vad_target"] for b in batch], dim=0),
+        "shift_target": torch.stack([b["shift_target"] for b in batch], dim=0),
+        "shift_mask": torch.stack([b["shift_mask"] for b in batch], dim=0),
         "meeting": [b["meeting"] for b in batch],
         "speakers": [b["speakers"] for b in batch],
         "start_sec": torch.tensor([b["start_sec"] for b in batch], dtype=torch.float32),
