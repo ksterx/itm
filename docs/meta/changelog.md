@@ -1,8 +1,44 @@
 # 変更履歴
 
-> **Status**: stable | **Last reviewed**: 2026-05-10
+> **Status**: stable | **Last reviewed**: 2026-05-11
 >
 > ドキュメント・設計の主要変更を記録する。コードの詳細は git log / GitHub Releases に任せる。
+
+## 2026-05-11
+
+### Phase 2-B v4 評価: Shift 専用 BCE ヘッドで初めて AUC > 0.5 獲得
+
+`shift_head` を ITMModel に追加し、silence 直前の context から shift/hold を
+二値分類する BCE 損失で学習（pos_weight=1.5、frozen transformer、3 epoch）:
+
+- **ROC-AUC = 0.566**（v3 0.440、v2 0.487、baseline 0.701 — Phase 2-B で初の AUC > random）
+- PR-AUC = 0.353（base rate 0.280 を超える）
+- ただし shift 過剰予測の傾向（threshold ≤ 0.2 で全 SHIFT、0.3 で Hold 8% / Shift 94%）
+- shift_pos_weight=1.5 が強すぎた可能性
+- baseline 0.701 にはまだ大きな差
+
+意義:
+- survival NLL のみでは AUC ≤ 0.5 という構造的限界を突破
+- 専用 discriminative head が必要なことを実証
+- v5 候補: shift_pos_weight 調整、calibration、va_classifier 解凍
+
+詳細は [学習パイプライン](../implementation/pipeline.md#phase-2-b-v4-shift-専用-bce-ヘッド)。
+
+### v3 AUC 診断: 50% Shift は偶然だった
+
+`scripts/diagnose_itm_hazard.py` で 12 通りの hazard 集約を試した結果:
+
+- **v3 ROC-AUC = 0.440**（random 0.5 を下回る）— v2 も 0.487 で同様
+- どの集約・horizon・event combo でも AUC ≤ 0.56
+- INVERT (1 - hazard) が AUC 0.56 — 弱い負相関しか拾えていない
+- Hazard sigmoid 出力が極めて狭い帯域 [0.03, 0.16] に飽和
+
+baseline (MaAI) ROC-AUC = 0.701 と比較すると **v2/v3 は random discrimination**。
+post-hoc temperature scaling は AUC 不変なので無効 → 学習目的の変更が必須 → v4。
+
+`scripts/eval_itm_on_ami.py` と `scripts/eval_maai_on_ami.py` に `--auc` フラグを追加。
+
+詳細は [学習パイプライン](../implementation/pipeline.md#v3--baseline-auc-診断--survival-nll-の構造的限界)。
 
 ## 2026-05-10
 

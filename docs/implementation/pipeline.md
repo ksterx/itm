@@ -1,6 +1,6 @@
 # 学習パイプライン
 
-> **Status**: stable | **Last reviewed**: 2026-05-10 (v3)
+> **Status**: stable | **Last reviewed**: 2026-05-11 (v4)
 >
 > AMI Corpus → ITM 学習向け Dataset / DataLoader / 損失関数の実装。Phase 2 の fine-tune と Phase 3 の視覚追加で使う共通基盤。
 
@@ -445,6 +445,24 @@ python scripts/train_itm.py --all --epochs 3 --batch-size 2 \
 
 CPU で 3 epoch / 1125 step / 47 分。Train loss は step 10 の 1.55 から step 1100 の 0.25–0.50 帯まで単調減少。VAD aux loss も 0.78 → 0.07–0.20 で保持され、v1 の崩壊（0.93→0.52）は再現せず。
 
+### v3 / baseline AUC 診断 — survival NLL の構造的限界
+
+しきい値非依存の評価で実態が判明:
+
+| | ROC-AUC | PR-AUC | hazard 出力範囲 |
+|---|---|---|---|
+| **MaAI baseline** | **0.701** | **0.484** | (p_future ベース) |
+| v2 (frozen) | 0.487 | 0.270 | turn [0.028, 0.358] |
+| v3 (unfrozen) | 0.440 | 0.262 | turn [0.031, 0.109] |
+
+`scripts/diagnose_itm_hazard.py` で v3 の hazard score を 12 通りに集約しても AUC は 0.44–0.56 帯。
+
+- v2 の hazard 出力は v3 より広いが、shift discrimination はほぼ random
+- v3 は **scoring を反転** (1 - hazard) すると AUC が 0.560 に上がる — 弱い負相関
+- どちらも survival NLL のみでは shift discrimination を獲得できていない
+
+**結論**: post-hoc temperature scaling は AUC を上げない（モノトニック変換は不変）。学習目的を変える必要 → v4。
+
 ### v3 評価結果（IS1000b、threshold sweep）
 
 | threshold | frame_acc | Hold | Shift | Overall | 解釈 |
@@ -472,19 +490,86 @@ CPU で 3 epoch / 1125 step / 47 分。Train loss は step 10 の 1.55 から st
 
 ### v3 の意義と次の方向
 
-- **Shift 検出能力** という質的に重要な信号は v3 で初めて獲得した
-- 残る課題は **hazard 出力の calibration**（広がりが狭く、しきい値耐性がない）
+- 当初 Shift 50% は前進と解釈したが、AUC 診断で偶然と判明
+- survival NLL のみでは AUC ≤ 0.5 で discrimination 不能
+- v4 では学習目的を BCE ベース discriminative head に変更
 
-### v4 候補（次回）
+## Phase 2-B v4: Shift 専用 BCE ヘッド
+
+> **Status**: stable（2026-05-11 完了）
+>
+> survival NLL の構造的限界を回避するため、silence 直前の context から
+> shift/hold を直接二値分類する独立ヘッドを追加。
+
+### v4 アーキテクチャ
+
+```
+backbone hidden h ∈ (B, T_enc, dim)
+    ├─> hazard heads (turn / bc / overlap)  [既存、保持]
+    ├─> VAD head                             [既存、frozen]
+    └─> shift_head: LayerNorm → Linear(dim, 128) → GELU → Linear(128, 1)
+            → (B, T_enc) shift logits
+```
+
+### v4 学習設定
+
+```bash
+python scripts/train_itm.py --all --epochs 3 --batch-size 2 \
+    --pos-weight 20 --use-vad-aux --vad-loss-weight 1.0 \
+    --use-shift-head --shift-loss-weight 1.0 --shift-pos-weight 1.5 \
+    --freeze-transformer --save-name itm_phase2b_v4
+```
+
+| 項目 | v3 | v4 |
+|---|---|---|
+| transformer | unfrozen (lr=1e-5) | **frozen** |
+| Shift head | ❌ | ✅ (BCE on silence frames) |
+| trainable params | 8.07M | **149K** (heads + shift_head) |
+| 学習時間 (CPU) | 47 min | **39 min** |
+
+### v4 学習曲線
+
+| epoch | val loss |
+|---|---|
+| 0 | **0.0521** ← best |
+| 1 | 0.0637 |
+| 2 | 0.0565 |
+
+epoch 0 で best — 早めに過学習する傾向。step 内で shift loss は乱高下 (0.27–2.6)、batch ごとの label 偏りに敏感。
+
+### v4 評価結果（IS1000b、threshold sweep + AUC）
+
+| threshold | frame_acc | Hold | Shift | Overall |
+|---|---|---|---|---|
+| 0.005–0.2 | 0.453 | 0/134 | 52/52 (100%) | 52/186 (0.280) |
+| **0.3** | 0.453 | 11/134 (8.2%) | **49/52 (94.2%)** | 60/186 (0.323) |
+| 0.5 | 0.453 | 134/134 | 0/52 | 134/186 (0.720) |
+
+| | **ROC-AUC** | **PR-AUC** |
+|---|---|---|
+| baseline | 0.701 | 0.484 |
+| v2 (frozen) | 0.487 | 0.270 |
+| v3 (unfrozen) | 0.440 | 0.262 |
+| **v4 (shift head)** | **0.566** | **0.353** |
+
+### v4 観察
+
+1. **AUC 0.566 で初めて random (0.5) を上回った** — Phase 2-B で初の本物の discriminative signal
+2. 専用 BCE ヘッドは survival NLL より shift 検出に効く
+3. しきい値感度はまだ高い: Hold/Shift がしきい値で大きく振れる（pos_weight=1.5 が強すぎ shift 過剰予測）
+4. AUC 0.701 (baseline) にはまだ届かない
+5. Frame VAD 0.453 は frozen va_classifier が AMI 分布に転送できていない問題（v3 unfrozen の 0.748 と対比）
+
+### v5 候補（次回）
 
 | 修正 | 詳細 |
 |---|---|
-| **Logit temperature scaling** | 学習後に validation で温度パラメータ T を最適化、hazard を p^(1/T) に展開 |
-| **Calibration loss** | Brier score / focal loss の併用で hazard 出力の散らばりを促す |
-| **Score 集約変更** | `max(hazard[:K])` ではなく `mean` または `sum` で平滑化 |
-| **AUC / PR-AUC 評価** | しきい値依存のない指標で v3 が baseline を超えているかを再評価 |
-| **Shift 専用ヘッド** | survival とは別に mutual silence 直前の Shift/Hold 分類タスクを併走 |
-| **Frame VAD 回復** | VAD aux loss weight を 2.0–5.0 に上げる |
+| **shift_pos_weight を下げる** | 1.5 → 1.0 / 0.5 で shift 過剰予測を抑制 |
+| **Calibration set でしきい値最適化** | val から最適しきい値を学習し test で適用 |
+| **Score 集約変更** | `mean` ではなく `silence midpoint` の単一フレーム値で評価 |
+| **va_classifier 解凍 + 低 LR** | Frame VAD を AMI 分布に適応（v3 で実証） |
+| **Multi-epoch で shift_head LR を別管理** | shift loss の振動が大きいので別 optimizer / scheduler |
+| **`--shift-loss-weight` 増加** | 2.0–5.0 で shift 学習を支配的に |
 
 ## 関連ページ
 
