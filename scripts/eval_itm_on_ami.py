@@ -6,6 +6,7 @@ Loads a checkpoint produced by ``scripts/train_itm.py`` and computes:
    the ground-truth speaker?
 2. **Hold/shift accuracy** — at each mutual-silence boundary (≥ 200 ms),
    compare predicted turn-shift hazard against ground truth label.
+3. **AUC / PR-AUC** — threshold-free metrics over the (gt, max_hazard) pairs.
 
 Hold/shift mapping for ITM:
 * GT: from segments around the silence (same protocol as eval_maai_on_ami)
@@ -13,16 +14,15 @@ Hold/shift mapping for ITM:
   - if max-hazard > threshold → predict SHIFT
   - else                       → predict HOLD
 
-Threshold is calibrated on a held-out portion (default: pick the
-threshold that maximises balanced accuracy on the eval set; for fair
-single-meeting eval we report multiple thresholds).
+The threshold sweep and AUC reuse the same per-silence (gt, score) pairs,
+so inference runs only once per meeting.
 
 Usage::
 
-    python scripts/eval_itm_on_ami.py \
-        --checkpoint checkpoints/itm_phase2b_v1_best.pt \
-        --meetings IS1000b \
-        --threshold 0.05
+    python scripts/eval_itm_on_ami.py \\
+        --checkpoint checkpoints/itm_phase2b_v3_best.pt \\
+        --meetings IS1000b \\
+        --threshold-sweep --auc
 """
 
 from __future__ import annotations
@@ -107,17 +107,12 @@ def run_meeting_inference(
     horizon_bins: int,
     device: str,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Run inference over a meeting in non-overlapping chunks.
-
-    Returns ``(turn_shift_hazard, vad)`` arrays, both at ``target_frame_rate``,
-    spanning the full meeting duration.
-    """
     ds = AMIDataset(
         ANNOT_ROOT,
         AUDIO_ROOT,
         meeting_ids=[meeting_id],
         chunk_sec=chunk_sec,
-        hop_sec=chunk_sec,  # non-overlapping
+        hop_sec=chunk_sec,
         frame_rate_hz=target_frame_rate,
         horizon_bins=horizon_bins,
     )
@@ -130,49 +125,23 @@ def run_meeting_inference(
     for batch in loader:
         audio = batch["audio"].to(device)
         out = model(audio, return_vad=True)
-        h_turn = out.hazard_logits[EventType.TURN_SHIFT].sigmoid().cpu().numpy()  # (1, T_enc, K)
-        v = out.vad_logits.sigmoid().cpu().numpy()  # (1, T_enc, 2)
-        # Take batch index 0
+        h_turn = out.hazard_logits[EventType.TURN_SHIFT].sigmoid().cpu().numpy()
+        v = out.vad_logits.sigmoid().cpu().numpy()
         hazard_chunks.append(h_turn[0])
         vad_chunks.append(v[0])
 
-    hazards = np.concatenate(hazard_chunks, axis=0)  # (T_total, K)
-    vads = np.concatenate(vad_chunks, axis=0)  # (T_total, 2)
-
-    # Resample to target_frame_rate (model's encoder is ~50 Hz; if matched, identity)
+    hazards = np.concatenate(hazard_chunks, axis=0)
+    vads = np.concatenate(vad_chunks, axis=0)
     return hazards, vads
 
 
-def evaluate(
-    model: torch.nn.Module,
-    meeting_id: str,
-    *,
-    threshold: float,
-    chunk_sec: float,
-    target_frame_rate: int,
-    horizon_bins: int,
-    device: str,
-) -> dict:
-    print(f"\n=== {meeting_id}  threshold={threshold} ===")
-
-    # Get model output
-    hazards, vads_pred = run_meeting_inference(
-        model,
-        meeting_id,
-        chunk_sec=chunk_sec,
-        target_frame_rate=target_frame_rate,
-        horizon_bins=horizon_bins,
-        device=device,
-    )
-
-    # Get ground-truth VAD by reusing AMIDataset's logic via a one-off load
+def gt_vad_for_meeting(meeting_id: str, target_frame_rate: int) -> tuple[np.ndarray, float]:
     from itm.data.ami import load_meeting
 
     meeting = load_meeting(ANNOT_ROOT, meeting_id)
     talk = {s: sum(seg.duration for seg in segs) for s, segs in meeting.segments_by_speaker.items()}
     spk1, spk2 = sorted(talk.items(), key=lambda kv: -kv[1])[:2]
     spk1, spk2 = spk1[0], spk2[0]
-
     duration_sec = max(s.end for s in meeting.all_segments())
     n_frames = int(duration_sec * target_frame_rate)
     gt_vad = np.zeros((n_frames, 2), dtype=bool)
@@ -182,27 +151,20 @@ def evaluate(
             i_start = max(0, int(seg.start / dt))
             i_end = min(n_frames, int(seg.end / dt) + 1)
             gt_vad[i_start:i_end, ch] = True
+    return gt_vad, duration_sec
 
-    # Align lengths
-    n = min(len(hazards), len(vads_pred), len(gt_vad))
+
+def collect_silence_scores(
+    hazards: np.ndarray,
+    gt_vad: np.ndarray,
+    target_frame_rate: int,
+) -> list[tuple[str, float]]:
+    """For each well-defined mutual silence: return (gt_label, max_hazard_score)."""
+    n = min(len(hazards), len(gt_vad))
     hazards = hazards[:n]
-    vads_pred = vads_pred[:n]
     gt_vad = gt_vad[:n]
-
-    # ---------- Frame VAD accuracy ----------
-    single_mask = gt_vad[:, 0] ^ gt_vad[:, 1]
-    if single_mask.sum() > 0:
-        gt_speaker = gt_vad[:, 1].astype(int)
-        pred_speaker = (vads_pred[:, 1] > vads_pred[:, 0]).astype(int)
-        frame_acc = float((gt_speaker[single_mask] == pred_speaker[single_mask]).mean())
-    else:
-        frame_acc = float("nan")
-
-    # ---------- Hold/shift via hazard ----------
     silences = find_mutual_silences_from_vad(gt_vad, target_frame_rate)
-    counts: Counter[str] = Counter()
-    correct: Counter[str] = Counter()
-    confusion: dict[tuple[str, str], int] = defaultdict(int)
+    pairs: list[tuple[str, float]] = []
     for i_s, i_e in silences:
         gt_label = classify_hold_shift_gt(gt_vad, i_s, i_e)
         if gt_label is None:
@@ -210,18 +172,22 @@ def evaluate(
         mid = (i_s + i_e) // 2
         if mid >= n:
             continue
-        # Predicted: max hazard in lookahead window
         max_h = float(hazards[mid, :LOOKAHEAD_BINS].max())
-        pred_label = "shift" if max_h > threshold else "hold"
+        pairs.append((gt_label, max_h))
+    return pairs
+
+
+def score_threshold(pairs: list[tuple[str, float]], threshold: float) -> dict:
+    counts: Counter[str] = Counter()
+    correct: Counter[str] = Counter()
+    confusion: dict[tuple[str, str], int] = defaultdict(int)
+    for gt_label, score in pairs:
+        pred_label = "shift" if score > threshold else "hold"
         counts[gt_label] += 1
         if pred_label == gt_label:
             correct[gt_label] += 1
         confusion[(gt_label, pred_label)] += 1
-
     return {
-        "meeting": meeting_id,
-        "duration_sec": duration_sec,
-        "frame_acc": frame_acc,
         "hold_correct": correct["hold"],
         "hold_total": counts["hold"],
         "shift_correct": correct["shift"],
@@ -231,19 +197,104 @@ def evaluate(
     }
 
 
-def print_aggregate(results: list[dict]) -> None:
-    if not results:
-        print("\nNo results.")
-        return
-    print("\n" + "=" * 80)
-    print(f"AGGREGATE  (threshold={results[0]['threshold']})")
-    print("=" * 80)
+def compute_auc(pairs: list[tuple[str, float]]) -> dict:
+    """ROC-AUC and PR-AUC for shift detection (positive class = 'shift').
+
+    Implemented without sklearn to keep deps minimal.
+    """
+    if not pairs:
+        return {"roc_auc": float("nan"), "pr_auc": float("nan"), "n_pos": 0, "n_neg": 0}
+    y = np.array([1 if g == "shift" else 0 for g, _ in pairs], dtype=np.int64)
+    s = np.array([sc for _, sc in pairs], dtype=np.float64)
+    n_pos = int(y.sum())
+    n_neg = int(len(y) - n_pos)
+    if n_pos == 0 or n_neg == 0:
+        return {"roc_auc": float("nan"), "pr_auc": float("nan"), "n_pos": n_pos, "n_neg": n_neg}
+
+    # ROC-AUC via Mann-Whitney U statistic
+    order = np.argsort(s, kind="mergesort")
+    ranks = np.empty(len(s), dtype=np.float64)
+    # Average rank for ties
+    s_sorted = s[order]
+    i = 0
+    while i < len(s):
+        j = i
+        while j < len(s) and s_sorted[j] == s_sorted[i]:
+            j += 1
+        avg_rank = (i + j - 1) / 2.0 + 1.0
+        ranks[order[i:j]] = avg_rank
+        i = j
+    sum_ranks_pos = ranks[y == 1].sum()
+    u = sum_ranks_pos - n_pos * (n_pos + 1) / 2.0
+    roc_auc = float(u / (n_pos * n_neg))
+
+    # PR-AUC by trapezoidal integration over sorted thresholds
+    desc = np.argsort(-s, kind="mergesort")
+    y_sorted = y[desc]
+    tp = np.cumsum(y_sorted)
+    fp = np.cumsum(1 - y_sorted)
+    precision = tp / np.maximum(tp + fp, 1)
+    recall = tp / n_pos
+    # Prepend (recall=0, precision=1) for proper integration
+    recall = np.concatenate([[0.0], recall])
+    precision = np.concatenate([[1.0], precision])
+    # AP = sum of (recall[i] - recall[i-1]) * precision[i]
+    pr_auc = float(np.sum(np.diff(recall) * precision[1:]))
+
+    return {"roc_auc": roc_auc, "pr_auc": pr_auc, "n_pos": n_pos, "n_neg": n_neg}
+
+
+def evaluate_meeting(
+    model: torch.nn.Module,
+    meeting_id: str,
+    *,
+    chunk_sec: float,
+    target_frame_rate: int,
+    horizon_bins: int,
+    device: str,
+) -> dict:
+    """Run inference once, return scores + frame VAD accuracy."""
+    print(f"\n--- inference: {meeting_id} ---")
+    hazards, vads_pred = run_meeting_inference(
+        model,
+        meeting_id,
+        chunk_sec=chunk_sec,
+        target_frame_rate=target_frame_rate,
+        horizon_bins=horizon_bins,
+        device=device,
+    )
+    gt_vad, duration_sec = gt_vad_for_meeting(meeting_id, target_frame_rate)
+    n = min(len(hazards), len(vads_pred), len(gt_vad))
+    hazards = hazards[:n]
+    vads_pred = vads_pred[:n]
+    gt_vad = gt_vad[:n]
+
+    single_mask = gt_vad[:, 0] ^ gt_vad[:, 1]
+    if single_mask.sum() > 0:
+        gt_speaker = gt_vad[:, 1].astype(int)
+        pred_speaker = (vads_pred[:, 1] > vads_pred[:, 0]).astype(int)
+        frame_acc = float((gt_speaker[single_mask] == pred_speaker[single_mask]).mean())
+    else:
+        frame_acc = float("nan")
+
+    pairs = collect_silence_scores(hazards, gt_vad, target_frame_rate)
+    return {
+        "meeting": meeting_id,
+        "duration_sec": duration_sec,
+        "frame_acc": frame_acc,
+        "pairs": pairs,
+    }
+
+
+def print_threshold_table(meeting_results: list[dict], threshold: float) -> None:
+    print(f"\nthreshold = {threshold}")
     print(f"{'meeting':<12}{'frame_acc':>11}{'hold':>14}{'shift':>14}{'overall':>16}")
     h_c = h_t = s_c = s_t = 0
     fa_w = dur = 0.0
-    for r in results:
-        ho_c, ho_t = r["hold_correct"], r["hold_total"]
-        sh_c, sh_t = r["shift_correct"], r["shift_total"]
+    for r in meeting_results:
+        scored = score_threshold(r["pairs"], threshold)
+        ho_c, ho_t = scored["hold_correct"], scored["hold_total"]
+        sh_c, sh_t = scored["shift_correct"], scored["shift_total"]
         oc, ot = ho_c + sh_c, ho_t + sh_t
         oa = oc / ot if ot else float("nan")
         print(
@@ -259,12 +310,28 @@ def print_aggregate(results: list[dict]) -> None:
         dur += r["duration_sec"]
     oc, ot = h_c + s_c, h_t + s_t
     oa = oc / ot if ot else float("nan")
-    print("-" * 80)
     print(
         f"{'POOLED':<12}{(fa_w / dur):>11.3f}"
         f"{f'{h_c}/{h_t}':>14}{f'{s_c}/{s_t}':>14}"
         f"{f'{oc}/{ot} ({oa:.3f})':>16}"
     )
+
+
+def print_auc_table(meeting_results: list[dict]) -> None:
+    print("\n" + "=" * 80)
+    print("THRESHOLD-FREE METRICS (positive class = 'shift')")
+    print("=" * 80)
+    print(f"{'meeting':<12}{'n_pos':>8}{'n_neg':>8}{'ROC-AUC':>12}{'PR-AUC':>10}")
+    pooled: list[tuple[str, float]] = []
+    for r in meeting_results:
+        pooled.extend(r["pairs"])
+        m = compute_auc(r["pairs"])
+        print(
+            f"{r['meeting']:<12}{m['n_pos']:>8}{m['n_neg']:>8}"
+            f"{m['roc_auc']:>12.3f}{m['pr_auc']:>10.3f}"
+        )
+    p = compute_auc(pooled)
+    print(f"{'POOLED':<12}{p['n_pos']:>8}{p['n_neg']:>8}{p['roc_auc']:>12.3f}{p['pr_auc']:>10.3f}")
 
 
 def main() -> None:
@@ -275,13 +342,15 @@ def main() -> None:
     parser.add_argument(
         "--threshold-sweep", action="store_true", help="Run all DEFAULT_THRESHOLDS and report each"
     )
+    parser.add_argument(
+        "--auc", action="store_true", help="Report ROC-AUC and PR-AUC (threshold-free)"
+    )
     parser.add_argument("--chunk-sec", type=float, default=20.0)
     parser.add_argument("--target-frame-rate", type=int, default=50)
     parser.add_argument("--horizon-bins", type=int, default=40)
     parser.add_argument("--device", default="cpu", choices=["cpu", "cuda", "mps"])
     args = parser.parse_args()
 
-    # Load model
     print(f"Loading checkpoint: {args.checkpoint}")
     ckpt = torch.load(args.checkpoint, map_location=args.device, weights_only=False)
     print(f"  epoch={ckpt['epoch']}, val_loss={ckpt.get('val_loss', '-')}")
@@ -302,22 +371,27 @@ def main() -> None:
     if not ANNOT_ROOT.is_dir():
         sys.exit(f"AMI annotations not found at {ANNOT_ROOT}")
 
-    thresholds = DEFAULT_THRESHOLDS if args.threshold_sweep else [args.threshold]
+    meeting_results = [
+        evaluate_meeting(
+            model,
+            mid,
+            chunk_sec=args.chunk_sec,
+            target_frame_rate=args.target_frame_rate,
+            horizon_bins=args.horizon_bins,
+            device=args.device,
+        )
+        for mid in args.meetings
+    ]
 
+    thresholds = DEFAULT_THRESHOLDS if args.threshold_sweep else [args.threshold]
+    print("\n" + "=" * 80)
+    print("THRESHOLD SWEEP")
+    print("=" * 80)
     for thr in thresholds:
-        results = []
-        for mid in args.meetings:
-            r = evaluate(
-                model,
-                mid,
-                threshold=thr,
-                chunk_sec=args.chunk_sec,
-                target_frame_rate=args.target_frame_rate,
-                horizon_bins=args.horizon_bins,
-                device=args.device,
-            )
-            results.append(r)
-        print_aggregate(results)
+        print_threshold_table(meeting_results, thr)
+
+    if args.auc:
+        print_auc_table(meeting_results)
 
 
 if __name__ == "__main__":

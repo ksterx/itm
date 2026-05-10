@@ -116,6 +116,7 @@ class MeetingResult:
     shift_correct: int
     shift_total: int
     confusion: dict[tuple[str, str], int]
+    score_pairs: list[tuple[str, float]] | None = None  # (gt_label, shift_score) per silence
 
     @property
     def overall_correct(self) -> int:
@@ -347,6 +348,7 @@ def evaluate_meeting(meeting_id: str, *, fast: bool) -> MeetingResult | None:
     counts: Counter[str] = Counter()
     correct: Counter[str] = Counter()
     confusion: dict[tuple[str, str], int] = defaultdict(int)
+    score_pairs: list[tuple[str, float]] = []
     for i_s, i_e in silences:
         prev_ch, next_ch, label = classify_hold_shift(gt, i_s, i_e)
         if label is None:
@@ -356,6 +358,9 @@ def evaluate_meeting(meeting_id: str, *, fast: bool) -> MeetingResult | None:
             continue
         pred_next_ch = 1 if p_future[mid, 1] > p_future[mid, 0] else 0
         pred_label = "hold" if pred_next_ch == prev_ch else "shift"
+        # Shift score: probability mass on the speaker who was NOT speaking before silence
+        shift_score = float(p_future[mid, 1 - prev_ch])
+        score_pairs.append((label, shift_score))
         counts[label] += 1
         if pred_label == label:
             correct[label] += 1
@@ -370,6 +375,7 @@ def evaluate_meeting(meeting_id: str, *, fast: bool) -> MeetingResult | None:
         shift_correct=correct["shift"],
         shift_total=counts["shift"],
         confusion=dict(confusion),
+        score_pairs=score_pairs,
     )
 
     print(f"  Frame VAD acc: {frame_acc:.3f}")
@@ -443,6 +449,9 @@ def main() -> None:
     parser.add_argument(
         "--fast", action="store_true", help="Skip real-time wav playback timing (~4x faster)"
     )
+    parser.add_argument(
+        "--auc", action="store_true", help="Report ROC-AUC and PR-AUC for shift detection"
+    )
     args = parser.parse_args()
 
     if args.all:
@@ -465,6 +474,62 @@ def main() -> None:
             results.append(r)
 
     print_aggregate(results)
+
+    if args.auc:
+        print_auc(results)
+
+
+def _auc_from_pairs(pairs: list[tuple[str, float]]) -> tuple[float, float, int, int]:
+    """Compute (ROC-AUC, PR-AUC, n_pos, n_neg). Positive class = 'shift'."""
+    if not pairs:
+        return float("nan"), float("nan"), 0, 0
+    y = np.array([1 if g == "shift" else 0 for g, _ in pairs], dtype=np.int64)
+    s = np.array([sc for _, sc in pairs], dtype=np.float64)
+    n_pos = int(y.sum())
+    n_neg = int(len(y) - n_pos)
+    if n_pos == 0 or n_neg == 0:
+        return float("nan"), float("nan"), n_pos, n_neg
+    order = np.argsort(s, kind="mergesort")
+    ranks = np.empty(len(s), dtype=np.float64)
+    s_sorted = s[order]
+    i = 0
+    while i < len(s):
+        j = i
+        while j < len(s) and s_sorted[j] == s_sorted[i]:
+            j += 1
+        avg_rank = (i + j - 1) / 2.0 + 1.0
+        ranks[order[i:j]] = avg_rank
+        i = j
+    sum_ranks_pos = ranks[y == 1].sum()
+    u = sum_ranks_pos - n_pos * (n_pos + 1) / 2.0
+    roc_auc = float(u / (n_pos * n_neg))
+
+    desc = np.argsort(-s, kind="mergesort")
+    y_sorted = y[desc]
+    tp = np.cumsum(y_sorted)
+    fp = np.cumsum(1 - y_sorted)
+    precision = tp / np.maximum(tp + fp, 1)
+    recall = tp / n_pos
+    recall = np.concatenate([[0.0], recall])
+    precision = np.concatenate([[1.0], precision])
+    pr_auc = float(np.sum(np.diff(recall) * precision[1:]))
+    return roc_auc, pr_auc, n_pos, n_neg
+
+
+def print_auc(results: list[MeetingResult]) -> None:
+    print("\n" + "=" * 72)
+    print("THRESHOLD-FREE METRICS (positive class = 'shift')")
+    print("=" * 72)
+    print(f"{'meeting':<12}{'n_pos':>8}{'n_neg':>8}{'ROC-AUC':>12}{'PR-AUC':>10}")
+    pooled: list[tuple[str, float]] = []
+    for r in results:
+        if r.score_pairs is None:
+            continue
+        pooled.extend(r.score_pairs)
+        roc, pr, p, n = _auc_from_pairs(r.score_pairs)
+        print(f"{r.meeting_id:<12}{p:>8}{n:>8}{roc:>12.3f}{pr:>10.3f}")
+    roc, pr, p, n = _auc_from_pairs(pooled)
+    print(f"{'POOLED':<12}{p:>8}{n:>8}{roc:>12.3f}{pr:>10.3f}")
 
 
 if __name__ == "__main__":
