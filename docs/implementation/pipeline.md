@@ -1,6 +1,6 @@
 # 学習パイプライン
 
-> **Status**: stable | **Last reviewed**: 2026-05-10
+> **Status**: stable | **Last reviewed**: 2026-05-10 (v3)
 >
 > AMI Corpus → ITM 学習向け Dataset / DataLoader / 損失関数の実装。Phase 2 の fine-tune と Phase 3 の視覚追加で使う共通基盤。
 
@@ -407,6 +407,84 @@ Done. 375 steps in 779.2s (13 min)
 | **複数 epoch** | 1 epoch では不十分の可能性。3〜5 epoch で再訓練 |
 | **`p_now` を ITM から出力** | フェアな Frame VAD 比較のため（[deferred: v3]） |
 | **Shift 専用の訓練 signal** | mutual silence の gt_label と直接結びつくラベル（survival とは別）も併用
+
+## Phase 2-B v3: transformer 部分解凍 + multi-epoch
+
+> **Status**: stable（2026-05-10 完了）
+>
+> v2 で残された v3 アクション項目のうち最重要 3 つを 1 回の実験に集約。
+
+### v3 学習設定
+
+```bash
+python scripts/train_itm.py --all --epochs 3 --batch-size 2 \
+    --pos-weight 20 --use-vad-aux --vad-loss-weight 1.0 \
+    --lr 1e-5 --save-name itm_phase2b_v3
+```
+
+| 項目 | v2 | v3 |
+|---|---|---|
+| transformer | **frozen** | **trainable** |
+| learning rate | 3.63e-4 (head のみ) | **1e-5** (全パラメータ) |
+| epochs | 1 | **3** |
+| pos_weight | 50 | **20** |
+| VAD aux | ✅ | ✅ |
+
+**狙い**:
+- 低 LR で transformer を AMI に適応させつつ、VAD aux で大規模 pretrain の能力を保つ
+- pos_weight=20 で v1 (=1, all-zero collapse) と v2 (=50, hold-bias) の中間
+- 3 epoch で 1 epoch では拾えない学習信号を回収
+
+### v3 学習曲線
+
+| epoch | val loss |
+|---|---|
+| 0 | 0.300 |
+| 1 | 0.137 |
+| 2 | **0.095** |
+
+CPU で 3 epoch / 1125 step / 47 分。Train loss は step 10 の 1.55 から step 1100 の 0.25–0.50 帯まで単調減少。VAD aux loss も 0.78 → 0.07–0.20 で保持され、v1 の崩壊（0.93→0.52）は再現せず。
+
+### v3 評価結果（IS1000b、threshold sweep）
+
+| threshold | frame_acc | Hold | Shift | Overall | 解釈 |
+|---|---|---|---|---|---|
+| 0.005–0.09 | 0.748 | 0/134 | 52/52 (100%) | 52/186 (0.280) | 全 SHIFT 予測 |
+| **0.10** | 0.748 | 48/134 (35.8%) | 26/52 (**50.0%**) | 74/186 (**0.398**) | 唯一の動作点 |
+| 0.11–0.5 | 0.748 | 134/134 (100%) | 0/52 (0%) | 134/186 (0.720) | 全 HOLD 予測（= データ prior） |
+
+比較:
+
+| モデル | Hold | Shift | Overall | 備考 |
+|---|---|---|---|---|
+| MaAI baseline | 64.2% | **44.2%** | 0.586 | バランス良 |
+| v2 (frozen, pw=50) | 79.1% | 17.3% | **0.618** | hold バイアス |
+| v3 (unfrozen, pw=20) | 35.8% | **50.0%** | 0.398 | shift バイアス、calibration が脆弱 |
+| trivial (always HOLD) | 100% | 0% | 0.720 | データ prior |
+
+### v3 観察
+
+1. **Shift accuracy 50.0% で初めて baseline (44.2%) を上回った** — Phase 2-B 系列で初の真の前進
+2. ただし overall 0.398 は baseline 0.586 を下回る — Hold が 36% まで落ちたため
+3. Hazard 分布が狭く、threshold 0.10 ↔ 0.11 で全反転する**「all-or-nothing」現象**
+4. Frame VAD 0.748 は v2/baseline (0.93) より低下 — 低 LR でも transformer fine-tune の影響あり
+5. Trivial (常に HOLD) が 0.720 でテスト集合 prior と一致 — Overall 単独は誤導的指標
+
+### v3 の意義と次の方向
+
+- **Shift 検出能力** という質的に重要な信号は v3 で初めて獲得した
+- 残る課題は **hazard 出力の calibration**（広がりが狭く、しきい値耐性がない）
+
+### v4 候補（次回）
+
+| 修正 | 詳細 |
+|---|---|
+| **Logit temperature scaling** | 学習後に validation で温度パラメータ T を最適化、hazard を p^(1/T) に展開 |
+| **Calibration loss** | Brier score / focal loss の併用で hazard 出力の散らばりを促す |
+| **Score 集約変更** | `max(hazard[:K])` ではなく `mean` または `sum` で平滑化 |
+| **AUC / PR-AUC 評価** | しきい値依存のない指標で v3 が baseline を超えているかを再評価 |
+| **Shift 専用ヘッド** | survival とは別に mutual silence 直前の Shift/Hold 分類タスクを併走 |
+| **Frame VAD 回復** | VAD aux loss weight を 2.0–5.0 に上げる |
 
 ## 関連ページ
 

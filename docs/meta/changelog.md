@@ -1,10 +1,29 @@
 # 変更履歴
 
-> **Status**: stable | **Last reviewed**: 2026-05-09
+> **Status**: stable | **Last reviewed**: 2026-05-10
 >
 > ドキュメント・設計の主要変更を記録する。コードの詳細は git log / GitHub Releases に任せる。
 
 ## 2026-05-10
+
+### Phase 2-B v3 評価: Shift 検出能力を初獲得、calibration が新たな課題
+
+transformer 部分解凍 (lr=1e-5) + 3 epoch + pos_weight=20 + VAD aux:
+
+- **Val loss は 3 epoch で単調減少**: 0.300 → 0.137 → 0.095
+- **Shift accuracy 50.0%（baseline 44.2% を初めて上回る）** — Phase 2-B 系列で質的前進
+- ただし Hold が 35.8% に落ち、Overall は 0.398 で baseline 0.586 を下回る
+- しきい値 0.10 ↔ 0.11 で全反転する「all-or-nothing」現象 — hazard 分布が狭い
+- Frame VAD 0.748（baseline 0.933 より低いが v1 の 0.518 崩壊は回避）
+
+意義:
+- v1: all-zero collapse、v2: hold-bias、**v3: shift-bias** の流れで初めて Shift 信号を獲得
+- 残る課題は hazard 出力の calibration（散らばりが狭い）
+- Overall 単独は trivial (always HOLD) = 0.720 と一致するため誤導的、AUC 等が必要
+
+v4 候補: temperature scaling / calibration loss / score 集約変更 / AUC 評価 / Shift 専用ヘッド。
+
+詳細は [学習パイプライン](../implementation/pipeline.md#phase-2-b-v3-transformer-部分解凍--multi-epoch)。
 
 ### Phase 2-B v2 評価: ベースラインをわずかに上回る (0.618 vs 0.586)
 

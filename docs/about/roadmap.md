@@ -1,6 +1,6 @@
 # ロードマップ
 
-> **Status**: stable | **Last reviewed**: 2026-05-09
+> **Status**: stable | **Last reviewed**: 2026-05-10
 >
 > Phase 別の作業計画。状況により再評価する。
 
@@ -39,7 +39,8 @@
 - [x] 学習スクリプト + sanity smoke test（loss 単調減少）
 - [x] Phase 2-B v1: 4+1 split で fine-tune → **失敗を確認**（Shift 0%、VAD 崩壊）
 - [x] Phase 2-B v2: pos_weight=50 + VAD aux + frozen transformer → **ベースライン微改善**（0.618 vs 0.586）
-- [ ] **Phase 2-B v3**: transformer 部分解凍 + multi-epoch + pos_weight 探索
+- [x] **Phase 2-B v3**（2026-05-10）: transformer 部分解凍 (lr=1e-5) + 3 epoch + pos_weight=20 + VAD aux → **Shift 50% 獲得（baseline 44% 超え）**、ただし calibration 不足で Overall 0.398
+- [ ] **Phase 2-B v4**: temperature scaling / calibration loss / Shift 専用ヘッド / AUC ベース評価
 - [ ] 既存 VAP_BC、VAP_Nod との比較
 
 ### Phase 3 — 視覚追加
