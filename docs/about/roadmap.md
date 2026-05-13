@@ -20,14 +20,17 @@
 
 成果は [Phase 0 メモリ](https://github.com/ksterx/itm/blob/main/docs/implementation/environment.md) を参照。
 
-### Phase 1 — ベースライン再現
+### Phase 1 — ベースライン再現 ✅完了
 
 期間: 約 1 週間
 
-- [ ] AMI Corpus 部分ダウンロード（5 ミーティング、~3GB）
-- [ ] AMI XML 注釈パーサ実装（dialogueActs + segments + words の時間整合）
-- [ ] MaAI VAP モデルを AMI で推論
-- [ ] VAP の標準指標（hold/shift accuracy）を再現
+- [x] AMI Corpus 部分ダウンロード（5 ミーティング、~3GB）
+- [x] AMI XML 注釈パーサ実装（`src/itm/data/ami.py`）
+- [x] MaAI VAP モデルを AMI で推論（`scripts/eval_maai_on_ami.py`）
+- [x] VAP の標準指標を計測: Frame VAD 93.5% / hold-shift 57.2% (pooled, 5 会議, real-time)
+- [x] **AUC ベースライン**（2026-05-11、IS1000b）: ROC-AUC 0.701 / PR-AUC 0.484 — Phase 2-B 比較の基準
+
+VAP 論文 (Switchboard 75–80%) の完全再現はスコープ外。AMI / 4 人会議 / 未 fine-tune の差で説明可能（[MaAI ベースライン](../implementation/maai-baseline.md)）。
 
 ### Phase 2 — マルチイベント拡張
 
