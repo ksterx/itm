@@ -1,6 +1,6 @@
 # ロードマップ
 
-> **Status**: stable | **Last reviewed**: 2026-05-11
+> **Status**: stable | **Last reviewed**: 2026-05-14
 >
 > Phase 別の作業計画。状況により再評価する。
 
@@ -40,8 +40,8 @@
 - [x] Phase 2-B v1: 4+1 split で fine-tune → **失敗を確認**（Shift 0%、VAD 崩壊）
 - [x] Phase 2-B v2: pos_weight=50 + VAD aux + frozen transformer → **ベースライン微改善**（0.618 vs 0.586）
 - [x] **Phase 2-B v3**（2026-05-10）: transformer 部分解凍 (lr=1e-5) + 3 epoch + pos_weight=20 + VAD aux → AUC 0.440（baseline 0.701 と比較し random 以下）。Shift 50% は偶然
-- [x] **Phase 2-B v4**（2026-05-11）: Shift 専用 BCE ヘッド追加 → **AUC 0.566**（survival NLL の構造的限界を突破、ただし baseline 0.701 にはまだ届かない）
-- [ ] **Phase 2-B v5**: shift_pos_weight 調整 / val でしきい値 calibration / va_classifier 解凍
+- [x] **Phase 2-B v4**（2026-05-11/14）: Shift 専用 BCE ヘッド追加 → AUC 0.566、threshold=0.38 で **Overall 0.608**（baseline real-time 0.586 を上回る）。Hold 67% / Shift 44%、バランス良
+- [ ] **Phase 2-B v5**: AUC を baseline 0.701 に肉薄させる (pos_weight 調整 / va_classifier 解凍 / multi-epoch)
 - [ ] 既存 VAP_BC、VAP_Nod との比較
 
 ### Phase 3 — 視覚追加

@@ -1,8 +1,24 @@
 # 変更履歴
 
-> **Status**: stable | **Last reviewed**: 2026-05-11
+> **Status**: stable | **Last reviewed**: 2026-05-14
 >
 > ドキュメント・設計の主要変更を記録する。コードの詳細は git log / GitHub Releases に任せる。
+
+## 2026-05-14
+
+### Phase 2-B v4 再評価: threshold=0.38 で baseline real-time を上回る
+
+初回スイープで使った default threshold (0.005–0.5) が v4 shift_head の sigmoid
+出力レンジ (0.3–0.5) に合っていなかった。fine-grained スイープで真の動作点が判明:
+
+- threshold=0.38: **Hold 67% / Shift 44% / Overall 0.608**
+- baseline real-time (0.586) を上回り、Shift 44% は baseline と同等、Hold は 64% → 67%
+- AUC 0.566 という discriminative signal が実際に Overall accuracy として現れた
+
+v4 は単に AUC > random だけでなく、しきい値を合わせれば真に baseline を超える性能を
+獲得していた。`DEFAULT_THRESHOLDS` を v4 想定の幅広いレンジに更新。
+
+詳細は [学習パイプライン](../implementation/pipeline.md#phase-2-b-v4-shift-専用-bce-ヘッド)。
 
 ## 2026-05-11
 

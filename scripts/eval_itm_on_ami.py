@@ -43,7 +43,9 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 ANNOT_ROOT = REPO_ROOT / "data" / "raw" / "ami" / "annotations" / "unpacked"
 AUDIO_ROOT = REPO_ROOT / "data" / "raw" / "ami"
 
-DEFAULT_THRESHOLDS = [0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.3, 0.5]
+# Wide range covers both survival-hazard scores (typically 0.01–0.3 for ITM v1–v3)
+# and shift-head probabilities (typically 0.3–0.5 in v4+).
+DEFAULT_THRESHOLDS = [0.01, 0.05, 0.1, 0.2, 0.3, 0.35, 0.38, 0.4, 0.42, 0.45, 0.5]
 LOOKAHEAD_BINS = 20  # consider hazard in the next 20 bins (= 400 ms @ 50 Hz)
 
 

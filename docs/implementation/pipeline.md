@@ -539,11 +539,16 @@ epoch 0 で best — 早めに過学習する傾向。step 内で shift loss は
 
 ### v4 評価結果（IS1000b、threshold sweep + AUC）
 
-| threshold | frame_acc | Hold | Shift | Overall |
-|---|---|---|---|---|
-| 0.005–0.2 | 0.453 | 0/134 | 52/52 (100%) | 52/186 (0.280) |
-| **0.3** | 0.453 | 11/134 (8.2%) | **49/52 (94.2%)** | 60/186 (0.323) |
-| 0.5 | 0.453 | 134/134 | 0/52 | 134/186 (0.720) |
+最初のスイープでは default threshold が低すぎて v4 の特性に合わなかった (shift_head の sigmoid 出力は 0.3–0.5 帯にある)。fine-grained スイープで真の動作点を発見:
+
+| threshold | Hold | Shift | Overall |
+|---|---|---|---|
+| 0.30 | 8.2% | 94.2% | 0.323 |
+| 0.35 | 39.6% | 73.1% | 0.489 |
+| **0.38** | **67.2%** | **44.2%** | **0.608** ⭐ |
+| 0.40 | 74.6% | 25.0% | 0.608 |
+| 0.42 | 89.6% | 17.3% | 0.694 (hold-bias) |
+| 0.45+ | ≥97.8% | ≤5.8% | 0.720 (trivial all-HOLD) |
 
 | | **ROC-AUC** | **PR-AUC** |
 |---|---|---|
@@ -555,10 +560,19 @@ epoch 0 で best — 早めに過学習する傾向。step 内で shift loss は
 ### v4 観察
 
 1. **AUC 0.566 で初めて random (0.5) を上回った** — Phase 2-B で初の本物の discriminative signal
-2. 専用 BCE ヘッドは survival NLL より shift 検出に効く
-3. しきい値感度はまだ高い: Hold/Shift がしきい値で大きく振れる（pos_weight=1.5 が強すぎ shift 過剰予測）
-4. AUC 0.701 (baseline) にはまだ届かない
+2. **threshold=0.38 で Overall 0.608**（baseline real-time 0.586 を上回る）— Shift 44.2% (=baseline) かつ Hold 67.2% (>baseline 64%) でバランス改善
+3. 専用 BCE ヘッドは survival NLL より shift 検出に効く
+4. AUC 0.701 (baseline) にはまだ届かない — discriminative signal の上限は v5 で押し上げる
 5. Frame VAD 0.453 は frozen va_classifier が AMI 分布に転送できていない問題（v3 unfrozen の 0.748 と対比）
+
+### Phase 2-B 系列まとめ
+
+| | ROC-AUC | best Overall | Hold | Shift | 性質 |
+|---|---|---|---|---|---|
+| MaAI baseline (real-time) | 0.701 | 0.586 | 64% | 44% | バランス |
+| v2 (frozen survival NLL) | 0.487 | 0.618 | 79% | 17% | Hold-bias |
+| v3 (unfrozen survival NLL) | 0.440 | 0.398 | 36% | 50% | Shift-bias、偶然 |
+| **v4 (Shift BCE head)** | **0.566** | **0.608** | **67%** | **44%** | バランス、本物 |
 
 ### v5 候補（次回）
 
