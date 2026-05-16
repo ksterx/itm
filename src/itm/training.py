@@ -190,7 +190,12 @@ def compute_loss(
     shift_loss_value: float | None = None
     if shift_logits is not None and shift_target is not None and shift_mask is not None:
         common = _align_lengths(shift_logits.size(1), shift_target.size(1))
-        shift_bce = _frame_shift_bce(
+        # NOTE: Phase 2-B v7 (per-frame BCE + 17 meetings) regressed badly
+        # (AUC 0.501, best non-trivial Overall 0.306). Segment-BCE produces
+        # smoother output distributions that are calibratable; per-frame BCE
+        # produces all-or-nothing predictions on bigger data. v6-α (this loss
+        # + 17 meetings) remained our best with Overall 0.677.
+        shift_bce = _segment_shift_bce(
             shift_logits[:, :common],
             shift_target[:, :common],
             shift_mask[:, :common].float(),

@@ -1,8 +1,35 @@
 # 変更履歴
 
-> **Status**: stable | **Last reviewed**: 2026-05-16
+> **Status**: stable | **Last reviewed**: 2026-05-17
 >
 > ドキュメント・設計の主要変更を記録する。コードの詳細は git log / GitHub Releases に任せる。
+
+## 2026-05-17
+
+### Phase 2-B v7: per-frame BCE への revert は仮説外れで regression、v6-α で Phase 2-B 確定
+
+Codex の v7 review に従い `_segment_shift_bce` を `_frame_shift_bce` に revert
+（v4 と同じ per-frame supervision）し、v6-α と同じ 17 meetings データで再学習:
+
+- val loss: 0.820 → **0.815** (epoch 1 best、epoch 2 過学習)
+- 学習時間 CPU 123 min
+- ROC-AUC **0.501**（v4 0.566 / v6-α 0.535 から後退）
+- threshold sweep が 0.20 ↔ 0.30 で全反転する極端な二極化
+- best non-trivial Overall: 0.306 @ 0.20
+
+**仮説外れの示唆**: per-frame BCE は **データを増やすと極端な二極化** を起こす。
+v4 の AUC 0.566 は「小データで偶々中間的な出力に収まった」だけで、汎化的性質ではなかった。
+逆に segment-BCE (v6-α) は評価単位と訓練単位が一致するため出力分布が滑らかになり、
+calibration が効いて Overall を引き上げられる。
+
+**結論: Phase 2-B 確定モデル = v6-α** (`checkpoints/itm_phase2b_v6a_best.pt`)、
+Overall 0.677 で baseline real-time 0.586 を 9 ポイント上回る。
+AUC 0.7 級 discrimination は Phase 2-B では届かない。Phase 3 (視覚追加) へ移行。
+
+`training.py` の `compute_loss` を `_segment_shift_bce` (v6-α 設定) に戻して
+production path として固定。`_frame_shift_bce` は ablation 用に保持。
+
+詳細は [学習パイプライン § Phase 2-B v7 試行](../implementation/pipeline.md#phase-2-b-v7-試行-per-frame-bce-再導入--仮説外れで-regression)。
 
 ## 2026-05-16
 

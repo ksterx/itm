@@ -565,17 +565,18 @@ epoch 0 で best — 早めに過学習する傾向。step 内で shift loss は
 4. AUC 0.701 (baseline) にはまだ届かない — discriminative signal の上限は v5 で押し上げる
 5. Frame VAD 0.453 は frozen va_classifier が AMI 分布に転送できていない問題（v3 unfrozen の 0.748 と対比）
 
-### Phase 2-B 系列まとめ
+### Phase 2-B 系列まとめ（v7 で確定）
 
 | | ROC-AUC | best Overall | Hold | Shift | 性質 |
 |---|---|---|---|---|---|
 | MaAI baseline (real-time) | 0.701 | 0.586 | 64% | 44% | バランス |
 | v2 (frozen survival NLL) | 0.487 | 0.618 | 79% | 17% | Hold-bias |
 | v3 (unfrozen survival NLL) | 0.440 | 0.398 | 36% | 50% | Shift-bias、偶然 |
-| **v4 (Shift BCE head)** | **0.566** | 0.608 | 67% | 44% | バランス、本物 |
+| v4 (Shift BCE head, 5 mtgs) | 0.566 | 0.608 | 67% | 44% | バランス、本物 |
 | v5a (pw=1, lw=2, 5 epoch) | 0.497 | 0.699 (trivial) | trivial | trivial | 退化解 |
-| v5b (segment-BCE) | 0.508 | 0.602 @ 0.35 | 75% | 23% | Hold-bias |
-| **v6-α (17 meetings, 8.6h)** | 0.535 | **0.677 @ 0.38** | 82% | 31% | hold-bias 強、calibration 改善 |
+| v5b (segment-BCE, 5 mtgs) | 0.508 | 0.602 @ 0.35 | 75% | 23% | Hold-bias |
+| **v6-α (segment-BCE, 17 mtgs)** ⭐ | **0.535** | **0.677 @ 0.38** | 82% | 31% | **Phase 2-B 確定モデル** |
+| v7 (per-frame BCE, 17 mtgs) | 0.501 | 0.306 (non-trivial) | 極端 | 極端 | 二極化、回帰 |
 
 ## Phase 2-B v5 試行: ハイパー & 学習単位の探索（regression 続き）
 
@@ -695,6 +696,72 @@ ROC-AUC = **0.535** (PR-AUC 0.342)、Frame VAD 0.482。
 | **shift_head MLP 深層化** | 2-layer → 3-layer + dropout、表現容量増 |
 | **AMI scenario 全 50h** | v6-α より更に 6× データ、CPU 12–24h |
 | **per-frame BCE への revert** | `_segment_shift_bce` を撤去し v4 の per-frame BCE 学習に戻す（v6-α は segment-BCE のまま） |
+
+## Phase 2-B v7 試行: per-frame BCE 再導入 — 仮説外れで regression
+
+> **Status**: stable（2026-05-17 完了、negative result）
+>
+> Codex の v7 レビューを受けて `_segment_shift_bce` → `_frame_shift_bce` に
+> revert（v4 と同じ per-frame supervision）し、v6-α と同じ 17 meetings
+> データで再学習。仮説: 「per-frame BCE は v4 でうまくいったので、データを
+> 増やせばもっと良くなる」。
+
+### v7 学習設定 / 結果
+
+データ・hyperparams は v6-α と完全同一。loss だけ per-frame BCE に変更。
+
+| epoch | val loss |
+|---|---|
+| 0 | 0.820 |
+| 1 | **0.815** ← best |
+| 2 | 0.873 (過学習) |
+
+学習時間: CPU 123 min。
+
+### v7 評価 (IS1000b)
+
+| threshold | Hold | Shift | Overall |
+|---|---|---|---|
+| ≤0.10 | 0% | 100% | 0.280 (全 SHIFT) |
+| 0.20 | 5% | 96% | 0.306 |
+| 0.30 | 97% | 8% | 0.720 (= trivial Hold prior) |
+| ≥0.35 | 100% | 0% | 0.720 (trivial all-HOLD) |
+
+ROC-AUC = **0.501**（v4 0.566, v6-α 0.535 から大幅後退）
+PR-AUC = 0.314 / Frame VAD = 0.463
+
+### 真の発見: segment-BCE が実は正しかった
+
+per-frame BCE は **データを増やすと極端な二極化** を起こす:
+- 0.20 と 0.30 の間で全反転、中間の calibration window なし
+- v4 の AUC 0.566 は「小データでたまたま中間的な出力に収まった」だけ
+
+一方 segment-BCE (v6-α) は:
+- 評価単位 (mean over silence) と訓練単位が一致 → output 分布が滑らか
+- threshold sweep がスムーズに変化 → calibration が効く
+- Overall 0.677 を実現
+
+### Phase 2-B 系列の最終総括
+
+| | ROC-AUC | best Overall | 性質 | 評価 |
+|---|---|---|---|---|
+| MaAI baseline (real-time) | 0.701 | 0.586 | バランス | |
+| v1 (naive) | — | — | all-zero collapse | ❌ |
+| v2 (frozen survival NLL) | 0.487 | 0.618 | Hold-bias | △ |
+| v3 (unfrozen survival NLL) | 0.440 | 0.398 | Shift-bias (偶然) | ❌ |
+| v4 (per-frame shift BCE, 5 mtgs) | 0.566 | 0.608 | バランス、本物 | ⭕ |
+| v5a (hp sweep) | 0.497 | 退化 | — | ❌ |
+| v5b (segment-BCE, 5 mtgs) | 0.508 | 0.602 | Hold-bias | △ |
+| **v6-α (segment-BCE, 17 mtgs)** | 0.535 | **0.677** | hold-bias、calibration 良 | **⭕⭕** |
+| v7 (per-frame BCE, 17 mtgs) | 0.501 | 0.306 (non-trivial) | 極端な二極化 | ❌ |
+
+**Phase 2-B 確定: v6-α** がチャンピオンモデル。
+- `checkpoints/itm_phase2b_v6a_best.pt`
+- 設定: `--meetings ES2002a..c ES2003a-d ES2004a-d IS1000a IS1001a..d IS1000b --epochs 3 --pos-weight 20 --use-vad-aux --use-shift-head --shift-pos-weight 1.5 --freeze-transformer`
+- 損失: `_segment_shift_bce` (training.py)
+- 結果: **Overall 0.677 @ threshold=0.38** (baseline real-time 0.586 を 9 ポイント上回る)
+
+AUC 0.7 級の discrimination は Phase 2-B では届かない。**Phase 3 (視覚追加)** で別のシグナルを足してから再挑戦するのが ROI 高い。
 
 ### v5 旧候補（再評価）
 
