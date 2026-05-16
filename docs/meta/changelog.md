@@ -6,6 +6,25 @@
 
 ## 2026-05-16
 
+### Phase 2-B v6-α: データ 3.1× 拡張で best Overall 0.677 (calibration 改善、AUC は据え置き)
+
+AMI を外付け SSD (CT1000P3) に移行後、ES2003/ES2004/IS1001 シリーズ追加で
+学習データを 5 meetings (2.75h) → 17 meetings (8.6h) に拡張。v4 設定そのまま。
+
+- val loss: 0.841 → 0.828 → **0.794** (epoch 2 best、単調減少)
+- 学習時間: CPU 126 min (v4 の 39 min × 3.2、data 量比例)
+- **best Overall: 0.677 @ threshold=0.38** (v4 0.608 / baseline 0.586/0.640 を大きく上回る)
+- ROC-AUC: 0.535 (v4 0.566 から微悪化)
+- Hold 82% / Shift 31% で hold-bias 強化（v4 67%/44%、baseline 64%/44% と対比）
+
+意義:
+- **Overall accuracy は実用最高水準**、baseline を 9 ポイント上回る
+- データ拡張は **calibration 改善** には効くが **discrimination (AUC) は伸びない**
+- 「データを増やすだけでは AUC を baseline 0.7 まで届かせられない」と判明
+- v7 候補: va_classifier 解凍 / shift_head 深層化 / AMI 50h 拡張 / per-frame BCE への revert
+
+詳細は [学習パイプライン § Phase 2-B v6-α 試行](../implementation/pipeline.md#phase-2-b-v6-α-試行-データ-31-拡張-5--17-meetings)。
+
 ### Phase 2-B v5a / v5b 試行: 両方とも v4 から regression
 
 v4 (AUC 0.566) を起点に AUC > 0.6 を目指して 2 試行:
