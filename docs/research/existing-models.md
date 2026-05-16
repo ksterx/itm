@@ -1,8 +1,22 @@
 # 既存モデル
 
-> **Status**: stable | **Last reviewed**: 2026-05-09
+> **Status**: stable | **Last reviewed**: 2026-05-16
 >
 > ターンテイキング予測モデルの主要先行研究まとめ。
+
+## ITM はどこに立つのか（先に読む）
+
+このページは個別モデルを詳しく扱うが、まず ITM がそれらとどう違うかを 1 表で:
+
+| 軸 | 既存の代表 | ITM v1 |
+|---|---|---|
+| 出力 | 二値「次に喋るか」（VAP / Smart Turn / MaAI / DualTurn） | **3 イベント連続ハザード** (turn-shift / backchannel / overlap) |
+| モダリティ | 音声のみが主流（MM-VAP のみ視覚） | **音声 + 顔特徴**（v2 で呼吸プロキシ） |
+| サイズ | サーバ級が主流（Moshi 7B、DualTurn 0.5B） | **< 10M params**、CPU リアルタイム |
+| ベース実装 | 各々スクラッチ | **MaAI を backbone**、heads と shift_head を独立追加 |
+| ライセンス | research が多い（Smart Turn のみ BSD） | **BSD 2-Clause** |
+
+詳細は [新規性](../design/novelty.md) の差別化マトリクス。本ページは各モデルの中身を順に追う。
 
 ## 概観
 
