@@ -62,10 +62,24 @@ Annotations:
   https://groups.inf.ed.ac.uk/ami/AMICorpusAnnotations/ami_public_manual_1.6.2.zip
 ```
 
+## ストレージ配置（2026-05-16 以降）
+
+リポジトリ直下の `data/raw/ami` は **外付け SSD (CT1000P3) へのシンボリックリンク**:
+
+```
+data/raw/ami  ──symlink──>  /Volumes/CT1000P3/datasets/turn-taking/ami/
+```
+
+理由: AMI 全 100h 取得時に内蔵 SSD (228GB, 空き ~86GB) では余裕が少なく、外付け 1TB SSD (空き 826GB) に逃がすため。コード側の `ANNOT_ROOT` / `AUDIO_ROOT` (`data/raw/ami/...`) はそのまま使える。
+
+**注意**:
+- 学習中は CT1000P3 をマウント解除しない
+- 再現する場合: 外付けが無ければ `mkdir -p data/raw/ami` でリポ内にそのまま展開して OK
+
 ## ディレクトリ構造（DL 後）
 
 ```
-data/raw/ami/
+data/raw/ami/   (symlink 先 = /Volumes/CT1000P3/datasets/turn-taking/ami/)
 ├── annotations/
 │   ├── ami_public_manual_1.6.2.zip
 │   └── unpacked/
