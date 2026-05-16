@@ -121,6 +121,7 @@ graph LR
 ## 関連ページ
 
 - [v1 アーキテクチャ](architecture.md) — どう実装するか
+- [先行モデルとの実装差分](architecture.md#先行モデルとの実装差分) — VAP / MM-VAP / Smart Turn v3 とどの層が違うかの並べ表
 - [マルチイベント・ハザード](multi-event-hazard.md) — 主張 1 の詳細
 - [既存モデル](../research/existing-models.md) — 比較対象の詳細
 - [関連研究](../research/related-work.md) — 特に Obi & Funakoshi シリーズ

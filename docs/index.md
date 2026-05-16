@@ -30,6 +30,7 @@
 |---|---|
 | プロジェクトの動機を知りたい | [プロジェクト概要](about/motivation.md) → [解く問題](about/problem.md) |
 | 既存モデルと我々の差分を知りたい | [新規性](design/novelty.md) → [既存モデル](research/existing-models.md) |
+| Real-time VAP / MM-VAP / Smart Turn v3 とのアーキテクチャ差分 | [アーキテクチャ § 先行モデルとの実装差分](design/architecture.md#先行モデルとの実装差分) |
 | ターンテイキング AI の研究領域を知りたい | [調査の概観](research/overview.md) |
 | 我々のモデル設計を知りたい | [v1 アーキテクチャ](design/architecture.md) |
 | 自分でも動かしたい | [環境構築](implementation/environment.md) → [MaAI ベースライン](implementation/maai-baseline.md) |
