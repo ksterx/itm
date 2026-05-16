@@ -43,6 +43,79 @@ def _align_lengths(
     return min(model_t, target_t)
 
 
+def _frame_shift_bce(
+    shift_logits: torch.Tensor,
+    shift_target: torch.Tensor,
+    shift_mask: torch.Tensor,
+    *,
+    pos_weight: float,
+) -> torch.Tensor | None:
+    """Per-frame BCE on every labelable silence frame.
+
+    Each frame inside a labelable mutual silence contributes one BCE term.
+    Long silences therefore carry more gradient signal than short ones, and
+    the supervision density is high — both properties matter on small data.
+
+    Empirically (Phase 2-B v4 vs v5b/v6-α): per-frame BCE produces ~50
+    contributions per chunk while the segment-collapsed variant produces
+    only 3-5, and the per-frame variant wins on ROC-AUC. See pipeline.md
+    "v5b" and Codex v7 review for the analysis.
+
+    Returns ``None`` if the batch contains no labelable silence.
+    """
+    sm = shift_mask
+    if sm.sum() <= 0:
+        return None
+    pos_w = torch.tensor(pos_weight, device=shift_logits.device, dtype=shift_logits.dtype)
+    elem = torch.nn.functional.binary_cross_entropy_with_logits(
+        shift_logits, shift_target.float(), pos_weight=pos_w, reduction="none"
+    )
+    return (elem * sm).sum() / sm.sum().clamp(min=1.0)
+
+
+def _segment_shift_bce(
+    shift_logits: torch.Tensor,
+    shift_target: torch.Tensor,
+    shift_mask: torch.Tensor,
+    *,
+    pos_weight: float,
+) -> torch.Tensor | None:
+    """Per-silence-segment BCE for the shift head (v5b experiment, kept for reference).
+
+    Collapses each contiguous run of ``shift_mask == 1`` into a single
+    ``(mean_logit, segment_label)`` pair so the loss unit matches the
+    evaluation aggregation (``mean(shift_prob)`` over silence). Phase 2-B
+    v5b showed this regresses AUC vs per-frame BCE (0.566 → 0.508);
+    no longer used in ``compute_loss`` but kept for ablation studies.
+    """
+    seg_logits: list[torch.Tensor] = []
+    seg_targets: list[torch.Tensor] = []
+    bsz, n_t = shift_mask.shape
+    for b in range(bsz):
+        m = shift_mask[b]
+        in_run = False
+        run_start = 0
+        for t in range(n_t):
+            if m[t] > 0 and not in_run:
+                in_run = True
+                run_start = t
+            elif m[t] == 0 and in_run:
+                in_run = False
+                seg_logits.append(shift_logits[b, run_start:t].mean())
+                seg_targets.append(shift_target[b, run_start])
+        if in_run:
+            seg_logits.append(shift_logits[b, run_start:n_t].mean())
+            seg_targets.append(shift_target[b, run_start])
+
+    if not seg_logits:
+        return None
+
+    sl = torch.stack(seg_logits)
+    st = torch.stack(seg_targets).float()
+    pos_w = torch.tensor(pos_weight, device=sl.device, dtype=sl.dtype)
+    return torch.nn.functional.binary_cross_entropy_with_logits(sl, st, pos_weight=pos_w)
+
+
 def compute_loss(
     model_output_logits: dict[EventType, torch.Tensor],
     target_hazard: dict[EventType, torch.Tensor],
@@ -117,15 +190,13 @@ def compute_loss(
     shift_loss_value: float | None = None
     if shift_logits is not None and shift_target is not None and shift_mask is not None:
         common = _align_lengths(shift_logits.size(1), shift_target.size(1))
-        sl = shift_logits[:, :common]
-        st = shift_target[:, :common].float()
-        sm = shift_mask[:, :common].float()
-        if sm.sum() > 0:
-            pos_w = torch.tensor(shift_pos_weight, device=sl.device, dtype=sl.dtype)
-            elem = torch.nn.functional.binary_cross_entropy_with_logits(
-                sl, st, pos_weight=pos_w, reduction="none"
-            )
-            shift_bce = (elem * sm).sum() / sm.sum().clamp(min=1.0)
+        shift_bce = _frame_shift_bce(
+            shift_logits[:, :common],
+            shift_target[:, :common],
+            shift_mask[:, :common].float(),
+            pos_weight=shift_pos_weight,
+        )
+        if shift_bce is not None:
             total = total + shift_loss_weight * shift_bce
             shift_loss_value = shift_bce.detach().item()
 
