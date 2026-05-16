@@ -1,8 +1,23 @@
 # 変更履歴
 
-> **Status**: stable | **Last reviewed**: 2026-05-14
+> **Status**: stable | **Last reviewed**: 2026-05-16
 >
 > ドキュメント・設計の主要変更を記録する。コードの詳細は git log / GitHub Releases に任せる。
+
+## 2026-05-16
+
+### Phase 2-B v5a / v5b 試行: 両方とも v4 から regression
+
+v4 (AUC 0.566) を起点に AUC > 0.6 を目指して 2 試行:
+
+- **v5a** (`shift_pos_weight=1.0` + `shift_loss_weight=2.0` + 5 epoch): **ROC-AUC 0.497**（random）。pos_weight と loss_weight を同時に動かしたため切り分け不能。退化解。
+- **v5b** (segment-level BCE + v4 hyperparams 維持): **ROC-AUC 0.508**。`_segment_shift_bce` 関数で contiguous silence を 1 セグメントに collapse し eval と unit を揃えたが、gradient density が 10× 減少 (per-frame ~50 → per-segment ~3-5/chunk) して学習不足に。
+
+教訓: **v4 設定が現データ量での near-optimal**。これ以上は data 拡張・va_classifier 解凍などの構造変更が必要。
+
+v6 候補: AMI 全 100h ダウンロード / va_classifier 解凍 / shift_head MLP 深層化。
+
+詳細は [学習パイプライン § Phase 2-B v5 試行](../implementation/pipeline.md#phase-2-b-v5-試行-ハイパー--学習単位の探索regression-続き)。
 
 ## 2026-05-14
 

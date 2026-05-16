@@ -573,8 +573,53 @@ epoch 0 で best — 早めに過学習する傾向。step 内で shift loss は
 | v2 (frozen survival NLL) | 0.487 | 0.618 | 79% | 17% | Hold-bias |
 | v3 (unfrozen survival NLL) | 0.440 | 0.398 | 36% | 50% | Shift-bias、偶然 |
 | **v4 (Shift BCE head)** | **0.566** | **0.608** | **67%** | **44%** | バランス、本物 |
+| v5a (pw=1, lw=2, 5 epoch) | 0.497 | 0.699 (trivial) | trivial | trivial | 退化解 |
+| v5b (segment-BCE) | 0.508 | 0.602 @ 0.35 | 75% | 23% | Hold-bias |
 
-### v5 候補（次回）
+## Phase 2-B v5 試行: ハイパー & 学習単位の探索（regression 続き）
+
+v4 を起点に 1 変数ずつ動かして AUC > 0.566 を目指したが、2 試行とも regression:
+
+### v5a — `shift_pos_weight=1.0` + `shift_loss_weight=2.0` + 5 epoch
+
+意図: shift 過剰予測抑制 (pos_weight 下げ) + shift 学習を loss で支配的に (loss_weight 上げ) + 多 epoch。
+
+結果: **ROC-AUC 0.497** (random)、しきい値で振り切るだけの退化解。pos_weight と loss_weight を同時に動かしたため原因切り分け不能。「変数 1 つだけ動かす」原則を破ったのが教訓。
+
+### v5b — segment-level BCE (v4 hyperparams 維持)
+
+意図: 訓練の損失単位 (per-frame BCE) と評価の score 集約 (mean over silence) の **unit mismatch** を解消するため、`_segment_shift_bce` 関数で contiguous silence を 1 セグメントに collapse し、`(mean_logit, segment_label)` 単位で BCE 計算するように変更。
+
+結果: **ROC-AUC 0.508**（v4 0.566 から悪化）。
+
+原因解析:
+- v4 (per-frame BCE) は 1 chunk あたり ~50 silence frame の gradient signal
+- v5b (segment-BCE) は 1 chunk あたり 3–5 segment の gradient signal
+- **gradient density が約 10× 減少** → 学習不足
+- unit consistency より supervision density のほうが重要だった
+
+### Phase 2-B v5 教訓
+
+- v4 設定 (`pos_weight=1.5`, `loss_weight=1.0`, 3 epoch, per-frame BCE, frozen transformer) が現データ量での **near-optimal**
+- これ以上の改善には次の構造変更が必要:
+  1. **学習データ拡張** (5 → 20+ meetings、Phase 1 で download 拡大)
+  2. **`va_classifier` 解凍** (Frame VAD 0.453 → 0.9 期待、indirect に shift にも効く可能性)
+  3. **encoder fine-tune** (CPC を AMI で更新、ただし overfit リスク)
+  4. **アーキテクチャ変更** (head の MLP を深く、attention pooling 等)
+
+### 棚上げ: per-segment BCE 実装
+
+`_segment_shift_bce` 関数は v5b で性能悪化を確認したため、現在 `compute_loss` の shift パスから呼ばれている状態。v6 で per-frame BCE に戻すか option flag で切り替え可能にするかを判断する [deferred: v6 で扱い方針を決める、現状コードは保持]。
+
+### v6 候補（次回）
+
+| 修正 | 詳細 | 期待効果 |
+|---|---|---|
+| **AMI 全 100h ダウンロード** | 現在 5 meetings (165 min) → 100h | データ量 30× で AUC 0.6+ 期待 |
+| **va_classifier 解凍 (lr=1e-5)** | freeze_transformer=True かつ va_classifier だけ trainable のフラグ追加 | Frame VAD 回復 + shift 副次効果 |
+| **shift_head MLP 深層化** | 2-layer → 3-layer + dropout | 表現容量増、過学習注意 |
+
+### v5 旧候補（再評価）
 
 | 修正 | 詳細 |
 |---|---|
