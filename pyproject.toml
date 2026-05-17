@@ -43,6 +43,16 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/itm"]
 
+[tool.uv]
+# maai は ONNX inference や GUI 関連の重い依存をピン留めしているが、
+# 本リポは PyTorch backbone (VapGPT) しか使わない。macOS arm64 で wheel
+# が無いか不要な transitive を override で skip する。
+override-dependencies = [
+    "onnxruntime-gpu ; sys_platform == 'never'",
+    "pyqt5-qt5 ; sys_platform == 'never'",
+    "pyqt5 ; sys_platform == 'never'",
+]
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"

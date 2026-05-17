@@ -28,7 +28,7 @@ venv/
 env/
 ENV/
 .uv/
-uv.lock
+# uv.lock — commit for reproducibility (application, not library)
 poetry.lock
 Pipfile.lock
 
@@ -82,6 +82,7 @@ data/interim/
 
 # --- Project: model artifacts ---
 checkpoints/
+models/
 runs/
 wandb/
 mlruns/
