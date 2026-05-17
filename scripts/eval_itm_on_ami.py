@@ -108,8 +108,12 @@ def run_meeting_inference(
     target_frame_rate: int,
     horizon_bins: int,
     device: str,
+    visual_root: str | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
     """Returns (hazard, vad, shift_prob_or_None)."""
+    ds_kwargs: dict = {}
+    if visual_root is not None:
+        ds_kwargs["visual_root"] = visual_root
     ds = AMIDataset(
         ANNOT_ROOT,
         AUDIO_ROOT,
@@ -118,6 +122,7 @@ def run_meeting_inference(
         hop_sec=chunk_sec,
         frame_rate_hz=target_frame_rate,
         horizon_bins=horizon_bins,
+        **ds_kwargs,
     )
     loader = DataLoader(ds, batch_size=1, shuffle=False, collate_fn=ami_collate)
 
@@ -129,7 +134,12 @@ def run_meeting_inference(
     has_shift = False
     for batch in loader:
         audio = batch["audio"].to(device)
-        out = model(audio, return_vad=True)
+        visual = batch.get("visual")
+        visual_mask = batch.get("visual_mask")
+        if visual is not None:
+            visual = visual.to(device)
+            visual_mask = visual_mask.to(device)
+        out = model(audio, return_vad=True, visual=visual, visual_mask=visual_mask)
         h_turn = out.hazard_logits[EventType.TURN_SHIFT].sigmoid().cpu().numpy()
         v = out.vad_logits.sigmoid().cpu().numpy()
         hazard_chunks.append(h_turn[0])
@@ -272,6 +282,7 @@ def evaluate_meeting(
     target_frame_rate: int,
     horizon_bins: int,
     device: str,
+    visual_root: str | None = None,
 ) -> dict:
     """Run inference once, return scores + frame VAD accuracy."""
     print(f"\n--- inference: {meeting_id} ---")
@@ -282,6 +293,7 @@ def evaluate_meeting(
         target_frame_rate=target_frame_rate,
         horizon_bins=horizon_bins,
         device=device,
+        visual_root=visual_root,
     )
     gt_vad, duration_sec = gt_vad_for_meeting(meeting_id, target_frame_rate)
     n = min(len(hazards), len(vads_pred), len(gt_vad))
@@ -374,6 +386,11 @@ def main() -> None:
     parser.add_argument("--target-frame-rate", type=int, default=50)
     parser.add_argument("--horizon-bins", type=int, default=40)
     parser.add_argument("--device", default="cpu", choices=["cpu", "cuda", "mps"])
+    parser.add_argument(
+        "--visual-root",
+        default=None,
+        help="Per-meeting visual feature dir (auto-enabled if checkpoint has visual_encoder)",
+    )
     args = parser.parse_args()
 
     print(f"Loading checkpoint: {args.checkpoint}")
@@ -381,8 +398,14 @@ def main() -> None:
     print(f"  epoch={ckpt['epoch']}, val_loss={ckpt.get('val_loss', '-')}")
     train_args = ckpt.get("args", {})
     has_shift_head = any(k.startswith("shift_head.") for k in ckpt["model_state"])
+    has_visual = any(k.startswith("visual_encoder.") for k in ckpt["model_state"])
+    visual_root = args.visual_root
     if has_shift_head:
         print("  checkpoint contains shift_head — enabling")
+    if has_visual:
+        if visual_root is None:
+            visual_root = "data/processed/visual"
+        print(f"  checkpoint contains visual_encoder — enabling, visual_root={visual_root}")
     model = build_itm_model(
         lang="en",
         frame_rate=train_args.get("frame_rate", 20),
@@ -390,6 +413,7 @@ def main() -> None:
         horizon_bins=args.horizon_bins,
         device=args.device,
         enable_shift_head=has_shift_head,
+        enable_visual=has_visual,
     )
     missing, unexpected = model.load_state_dict(ckpt["model_state"], strict=False)
     if missing or unexpected:
@@ -408,6 +432,7 @@ def main() -> None:
             target_frame_rate=args.target_frame_rate,
             horizon_bins=args.horizon_bins,
             device=args.device,
+            visual_root=visual_root if has_visual else None,
         )
         for mid in args.meetings
     ]

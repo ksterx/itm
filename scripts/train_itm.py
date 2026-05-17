@@ -93,6 +93,16 @@ def main() -> None:
         default=2.0,
         help="Positive-class weight for shift BCE (hold:shift ratio is roughly 2.5:1 in AMI)",
     )
+    parser.add_argument(
+        "--use-visual",
+        action="store_true",
+        help="Enable visual fusion (MediaPipe features). Requires --visual-root.",
+    )
+    parser.add_argument(
+        "--visual-root",
+        default="data/processed/visual",
+        help="Per-meeting visual feature dir (data/processed/visual/<mid>/<spk>.npy)",
+    )
     parser.add_argument("--device", default="cpu", choices=["cpu", "cuda", "mps"])
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument(
@@ -114,6 +124,9 @@ def main() -> None:
     print(f"val   meetings: {val_ms}")
 
     print("Building datasets...")
+    ds_kwargs: dict = {}
+    if args.use_visual:
+        ds_kwargs["visual_root"] = args.visual_root
     train_ds = AMIDataset(
         ANNOT_ROOT,
         AUDIO_ROOT,
@@ -122,6 +135,7 @@ def main() -> None:
         hop_sec=args.hop_sec,
         frame_rate_hz=args.target_frame_rate,
         horizon_bins=args.horizon_bins,
+        **ds_kwargs,
     )
     val_ds = AMIDataset(
         ANNOT_ROOT,
@@ -131,6 +145,7 @@ def main() -> None:
         hop_sec=args.chunk_sec,  # non-overlapping for clean val
         frame_rate_hz=args.target_frame_rate,
         horizon_bins=args.horizon_bins,
+        **ds_kwargs,
     )
     print(f"train: {len(train_ds)} chunks   val: {len(val_ds)} chunks")
 
@@ -159,6 +174,7 @@ def main() -> None:
         device=args.device,
         freeze_transformer=args.freeze_transformer,
         enable_shift_head=args.use_shift_head,
+        enable_visual=args.use_visual,
     )
     model.to(args.device)
     print("Parameter counts:")
@@ -288,6 +304,9 @@ def _move_batch(batch: dict, device: str) -> dict:
         out["shift_target"] = batch["shift_target"].to(device)
     if "shift_mask" in batch:
         out["shift_mask"] = batch["shift_mask"].to(device)
+    if "visual" in batch:
+        out["visual"] = batch["visual"].to(device)
+        out["visual_mask"] = batch["visual_mask"].to(device)
     return out
 
 

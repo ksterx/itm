@@ -97,6 +97,9 @@ class ITMModel(nn.Module):
         freeze_encoder: bool = True,
         freeze_transformer: bool = False,
         enable_shift_head: bool = False,
+        enable_visual: bool = False,
+        visual_dim: int = 56,
+        visual_hidden: int = 128,
     ) -> None:
         super().__init__()
         from itm.data.labels import EventType as _EventType
@@ -135,6 +138,27 @@ class ITMModel(nn.Module):
         else:
             self.shift_head = None
 
+        # Phase 3: optional visual encoder + late additive fusion.
+        # Visual features (B, T_video, 2 speakers, visual_dim=56) come from
+        # MediaPipe Face Landmarker (blendshapes + Euler + mouth open). The
+        # encoder is a per-frame MLP that flattens both speakers and projects
+        # to the backbone hidden dim, gated by a learnable scalar α so the
+        # fusion can degrade gracefully if visual is unhelpful.
+        self.visual_encoder: nn.Sequential | None
+        self.visual_alpha: nn.Parameter | None
+        if enable_visual:
+            self.visual_encoder = nn.Sequential(
+                nn.LayerNorm(visual_dim * 2),
+                nn.Linear(visual_dim * 2, visual_hidden),
+                nn.GELU(),
+                nn.Linear(visual_hidden, dim),
+            )
+            # Start at 0 so initial behavior matches v6-α audio-only.
+            self.visual_alpha = nn.Parameter(torch.zeros(1))
+        else:
+            self.visual_encoder = None
+            self.visual_alpha = None
+
         if freeze_encoder:
             for enc in (self.backbone.encoder1, self.backbone.encoder2):
                 for p in enc.parameters():
@@ -169,12 +193,19 @@ class ITMModel(nn.Module):
         audio: torch.Tensor,
         *,
         return_vad: bool = False,
+        visual: torch.Tensor | None = None,
+        visual_mask: torch.Tensor | None = None,
     ) -> ITMOutput:
         """Forward pass.
 
         Args:
             audio: ``(B, T_samples, 2)`` float32 tensor at 16 kHz.
             return_vad: if True, also return VAD logits per channel.
+            visual: optional ``(B, T_video, 2, visual_dim)`` per-speaker
+                MediaPipe features at video native rate (≈25 Hz). Only used
+                when the model was built with ``enable_visual=True``.
+            visual_mask: optional ``(B, T_video)`` float in {0, 1} marking
+                video frames where a face was detected.
 
         Returns:
             :class:`ITMOutput` with per-event hazard logits.
@@ -193,6 +224,23 @@ class ITMModel(nn.Module):
         o2 = self.backbone.ar_channel(e2, past_kv=None)
         out = self.backbone.ar(o1["x"], o2["x"])
         h = out["x"]  # (B, T_enc, dim) cross-attended hidden state
+
+        # Phase 3: late additive visual fusion. Encode per-speaker features,
+        # upsample from video rate (~25 Hz) to encoder rate (~50 Hz) via
+        # nearest-neighbor interpolation, and add a scaled residual.
+        if self.visual_encoder is not None and visual is not None:
+            v_flat = visual.flatten(-2, -1)  # (B, T_video, 2 * visual_dim)
+            v_enc = self.visual_encoder(v_flat)  # (B, T_video, dim)
+            if visual_mask is not None:
+                v_enc = v_enc * visual_mask.unsqueeze(-1)
+            # Resize to encoder time axis (T_video → T_enc) with nearest-neighbor.
+            v_enc_t = v_enc.transpose(1, 2)  # (B, dim, T_video)
+            v_up = torch.nn.functional.interpolate(
+                v_enc_t, size=h.size(1), mode="nearest"
+            )
+            v_up = v_up.transpose(1, 2)  # (B, T_enc, dim)
+            assert self.visual_alpha is not None
+            h = h + self.visual_alpha * v_up
 
         hazard_logits: dict[EventType, torch.Tensor] = {}
         for ev in self._event_types:
@@ -257,6 +305,8 @@ def build_itm_model(
     freeze_encoder: bool = True,
     freeze_transformer: bool = False,
     enable_shift_head: bool = False,
+    enable_visual: bool = False,
+    visual_dim: int = 56,
     device: str = "cpu",
 ) -> ITMModel:
     """Construct an :class:`ITMModel` initialized from a MaAI pretrained VAP.
@@ -294,4 +344,6 @@ def build_itm_model(
         freeze_encoder=freeze_encoder,
         freeze_transformer=freeze_transformer,
         enable_shift_head=enable_shift_head,
+        enable_visual=enable_visual,
+        visual_dim=visual_dim,
     )

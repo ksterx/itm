@@ -242,7 +242,12 @@ def train_step(
     model.train()
     optimizer.zero_grad(set_to_none=True)
 
-    out = model(batch["audio"], return_vad=use_vad_aux)
+    out = model(
+        batch["audio"],
+        return_vad=use_vad_aux,
+        visual=batch.get("visual"),
+        visual_mask=batch.get("visual_mask"),
+    )
 
     vad_logits = out.vad_logits if use_vad_aux else None
     vad_target = _vad_target_from_batch(batch) if use_vad_aux else None
@@ -285,7 +290,11 @@ def eval_step(
 ) -> TrainStepOutput:
     """Single eval step (no grad, no optimizer)."""
     model.eval()
-    out = model(batch["audio"])
+    out = model(
+        batch["audio"],
+        visual=batch.get("visual"),
+        visual_mask=batch.get("visual_mask"),
+    )
     shift_logits = out.shift_logits if use_shift_head else None
     shift_target = batch.get("shift_target") if use_shift_head else None
     shift_mask = batch.get("shift_mask") if use_shift_head else None

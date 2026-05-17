@@ -82,7 +82,7 @@ data/interim/
 
 # --- Project: model artifacts ---
 checkpoints/
-models/
+/models/
 runs/
 wandb/
 mlruns/

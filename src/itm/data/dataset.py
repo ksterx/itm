@@ -60,6 +60,11 @@ class _MeetingCache:
     """
     shift_mask_full: torch.Tensor
     """``(n_frames_full,)`` float32 — 1 only on frames inside a labelable silence."""
+    visual_full: torch.Tensor | None = None
+    """Optional (n_video_frames_full, 2, 56) float32 — per-speaker MediaPipe features
+    at video native rate (25 Hz). None when no visual cache is provided."""
+    visual_fps: float = 25.0
+    """Native frame rate of ``visual_full`` (used for chunk slicing)."""
 
 
 def _pick_two_most_active(meeting: Meeting) -> tuple[str, str]:
@@ -167,6 +172,8 @@ class AMIDataset(Dataset):
         horizon_bins: int = 40,
         bin_size_sec: float = 0.05,
         speakers_override: dict[str, tuple[str, str]] | None = None,
+        visual_root: Path | str | None = None,
+        visual_fps: float = 25.0,
     ) -> None:
         super().__init__()
         if chunk_sec <= 0 or hop_sec <= 0:
@@ -179,6 +186,8 @@ class AMIDataset(Dataset):
         self.frame_rate_hz = int(frame_rate_hz)
         self.horizon_bins = int(horizon_bins)
         self.bin_size_sec = float(bin_size_sec)
+        self.visual_root = Path(visual_root) if visual_root is not None else None
+        self.visual_fps = float(visual_fps)
 
         self._caches: list[_MeetingCache] = []
         self._index: list[tuple[int, float]] = []  # (cache_idx, start_sec)
@@ -233,6 +242,8 @@ class AMIDataset(Dataset):
 
         shift_target_full, shift_mask_full = _compute_shift_targets(vad, self.frame_rate_hz)
 
+        visual_full = self._maybe_load_visual(meeting_id, speakers)
+
         return _MeetingCache(
             meeting_id=meeting_id,
             speakers=speakers,
@@ -242,7 +253,30 @@ class AMIDataset(Dataset):
             vad_full=vad,
             shift_target_full=shift_target_full,
             shift_mask_full=shift_mask_full,
+            visual_full=visual_full,
+            visual_fps=self.visual_fps,
         )
+
+    def _maybe_load_visual(
+        self, meeting_id: str, speakers: tuple[str, str]
+    ) -> torch.Tensor | None:
+        """Load (T_video, 2, 56) per-speaker visual features if available.
+
+        Looks for ``{visual_root}/{meeting_id}/{spk}.npy`` per speaker.
+        Returns None if visual_root is unset or any speaker file is missing
+        (so missing visual is a soft fallback — training proceeds audio-only).
+        """
+        if self.visual_root is None:
+            return None
+        mdir = self.visual_root / meeting_id
+        paths = [mdir / f"{spk}.npy" for spk in speakers]
+        if not all(p.exists() for p in paths):
+            return None
+        arrs = [np.load(p) for p in paths]
+        # Truncate to the shorter length (videos can differ by a few frames)
+        n = min(a.shape[0] for a in arrs)
+        stacked = np.stack([a[:n] for a in arrs], axis=1)  # (n, 2, 56)
+        return torch.from_numpy(stacked.astype(np.float32))
 
     # -------------------------------------------------------------- Dataset API
 
@@ -302,7 +336,7 @@ class AMIDataset(Dataset):
         shift_target_slice = self._slice_1d(cache.shift_target_full, f_start, f_end, n_frames_chunk)
         shift_mask_slice = self._slice_1d(cache.shift_mask_full, f_start, f_end, n_frames_chunk)
 
-        return {
+        item: dict = {
             "audio": audio_t,
             "hazard": hazard,
             "mask": mask,
@@ -313,6 +347,34 @@ class AMIDataset(Dataset):
             "speakers": cache.speakers,
             "start_sec": float(start_sec),
         }
+
+        # Visual slice at native video fps (25 Hz typically). Model upsamples to
+        # encoder rate at fusion time. Pad with zeros + a frame-validity mask.
+        if cache.visual_full is not None:
+            n_vid_chunk = int(self.chunk_sec * cache.visual_fps)
+            vf_start_v = int(start_sec * cache.visual_fps)
+            vf_end_v = vf_start_v + n_vid_chunk
+            full_v = cache.visual_full
+            if vf_end_v <= full_v.size(0):
+                visual_slice = full_v[vf_start_v:vf_end_v]
+                visual_mask = torch.ones(n_vid_chunk, dtype=torch.float32)
+            else:
+                avail = max(0, full_v.size(0) - vf_start_v)
+                pad_len = n_vid_chunk - avail
+                pad = torch.zeros(pad_len, 2, 56, dtype=torch.float32)
+                if avail > 0:
+                    visual_slice = torch.cat([full_v[vf_start_v:], pad], dim=0)
+                else:
+                    visual_slice = pad
+                visual_mask = torch.zeros(n_vid_chunk, dtype=torch.float32)
+                if avail > 0:
+                    visual_mask[:avail] = 1.0
+            # Frame-level no-face mask: any all-zero (2,56) row indicates "no face"
+            face_present = (visual_slice.abs().sum(dim=(-1, -2)) > 0).float()
+            visual_mask = visual_mask * face_present
+            item["visual"] = visual_slice
+            item["visual_mask"] = visual_mask
+        return item
 
     @staticmethod
     def _slice_1d(full: torch.Tensor, f_start: int, f_end: int, n_chunk: int) -> torch.Tensor:
@@ -348,4 +410,7 @@ def ami_collate(batch: list[dict]) -> dict:
     for ev_type in batch[0]["hazard"]:
         out["hazard"][ev_type] = torch.stack([b["hazard"][ev_type] for b in batch], dim=0)
         out["mask"][ev_type] = torch.stack([b["mask"][ev_type] for b in batch], dim=0)
+    if "visual" in batch[0]:
+        out["visual"] = torch.stack([b["visual"] for b in batch], dim=0)
+        out["visual_mask"] = torch.stack([b["visual_mask"] for b in batch], dim=0)
     return out
