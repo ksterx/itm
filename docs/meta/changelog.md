@@ -1,8 +1,34 @@
 # 変更履歴
 
-> **Status**: stable | **Last reviewed**: 2026-05-17
+> **Status**: stable | **Last reviewed**: 2026-05-18
 >
 > ドキュメント・設計の主要変更を記録する。コードの詳細は git log / GitHub Releases に任せる。
+
+## 2026-05-18
+
+### Phase 3 v8 + visual probe: 視覚 fusion 撤退、v6-α が最終モデル
+
+MediaPipe Face Landmarker (52 blendshapes + Euler + mouth open = 56 dim @ 25fps)
+を 17 meetings 全部から抽出 (2.5h CPU、335MB、`data/processed/visual/`) し、
+v6-α の audio backbone に late additive fusion で接続:
+
+- val: 0.816 (epoch 0 best、epoch 1/2 で過学習)
+- visual_alpha 学習後 = 0.071 (positive、visual は実際に使用)
+- IS1000b: **ROC-AUC 0.412** (v6-α 0.535 から大幅悪化)、Overall 0.581 (v6-α 0.677)
+
+Codex 提案の go/no-go probe (visual-only shift 弁別) で原因切り分け:
+- 4 val meetings 平均 ROC-AUC **0.510** ≈ random
+- IS1001b のみ 0.572、他 3 件は ≤ 0.50
+- → **visual feature 単独で shift discrimination 不可能**
+
+判明事項: v8 regression は fusion の不備ではなく visual に signal が無いこと
+が原因。richer fusion を試しても noise overfit が悪化するだけ。
+
+**Phase 3 撤退。Phase 2-B v6-α を最終モデルとして確定**。Phase 4 (量子化) /
+Phase 5 (HuggingFace 公開) へ移行。視覚 signal は v2/論文期に rPPG 呼吸推定
+や V-JEPA 蒸留など別アプローチで再挑戦。
+
+詳細は [学習パイプライン § Phase 3](../implementation/pipeline.md#phase-3-mediapipe-視覚-fusion--試行と撤退-2026-05-18)。
 
 ## 2026-05-17
 

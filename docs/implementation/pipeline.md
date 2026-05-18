@@ -763,6 +763,73 @@ per-frame BCE は **データを増やすと極端な二極化** を起こす:
 
 AUC 0.7 級の discrimination は Phase 2-B では届かない。**Phase 3 (視覚追加)** で別のシグナルを足してから再挑戦するのが ROI 高い。
 
+## Phase 3: MediaPipe 視覚 fusion — 試行と撤退 (2026-05-18)
+
+### v8: late-additive 視覚 fusion (失敗)
+
+v6-α に MediaPipe Face Landmarker 特徴 (52 blendshapes + 3 head Euler + 1 mouth open = 56 dim, 25 fps) を late additive fusion で追加:
+
+```
+v_enc = visual_encoder(concat(2 speakers))  # MLP 112→128→256
+h = h_audio + visual_alpha * v_enc          # alpha 学習スカラー、init=0
+```
+
+17 meetings の Closeup 動画から 2.5 時間かけて特徴抽出済み (34 .npy files、335MB)。
+
+- 学習: v6-α と同設定 + `--use-visual`、CPU 109 min
+- val: epoch 0 = **0.816** (epoch 1/2 で過学習、0.929 / 0.898)
+- visual_alpha 学習後 = **0.071** (positive、visual を実際に使用)
+
+評価 (IS1000b):
+
+| | ROC-AUC | best Overall | Frame VAD |
+|---|---|---|---|
+| **v6-α (audio-only)** | **0.535** | **0.677** | 0.482 |
+| v8 (+ visual) | **0.412** | 0.581 | 0.411 |
+
+→ **AUC 0.535 → 0.412 と大幅悪化**、Overall も 0.677 → 0.581 で baseline 並みに退行。
+
+### Codex go/no-go probe — visual-only shift 弁別テスト
+
+「visual fusion が悪化させるのは fusion が拙いからか、それとも visual に signal が無いからか」を切り分けるため、音声を完全に切った visual-only probe を実行 (Codex 推奨)。
+
+- 30K params の MLP (`scripts/probe_visual_only.py`)
+- 同じ train/val 分割、segment-mean BCE
+- 25Hz でラベルと完全整合、学習時間 36 秒
+
+判定閾値: visual-only ROC-AUC ≥ 0.56 で continue、未満で stop。
+
+結果 (best checkpoint):
+
+| meeting | n_pos | n_neg | ROC-AUC | PR-AUC |
+|---|---|---|---|---|
+| IS1001b | 101 | 163 | 0.572 | 0.410 |
+| IS1001c | 73 | 131 | 0.496 | 0.387 |
+| IS1001d | 47 | 49 | 0.496 | 0.509 |
+| **IS1000b (test)** | 62 | 164 | **0.476** | 0.265 |
+| **平均** | — | — | **0.510** | — |
+
+→ **平均 0.510 ≈ random**。IS1001b のみ 0.572 でかすかに signal、他 3 件は ≤ 0.50。visual feature **単独で安定した shift discrimination は不可能**。
+
+### Phase 3 結論
+
+- v8 の AUC 0.412 ← 0.535 regression は **fusion の不備ではなく visual に signal が無いこと** に起因
+- 30% no-face frames + AMI のカメラアングル制約 + blendshapes 特徴の限界が複合
+- richer fusion (cross-attention 等) を試しても noise overfit が悪化するだけ — **Codex の指摘通り**
+
+**Phase 3 撤退**。MediaPipe Face Landmarker による視覚 fusion は本データセット規模では効かない。v2/論文期では **rPPG 呼吸推定**や **V-JEPA 蒸留**など別の視覚 signal を試す価値あり。
+
+### Phase 2 + Phase 3 系列の最終総括
+
+| | ROC-AUC | best Overall | 性質 | 評価 |
+|---|---|---|---|---|
+| MaAI baseline (real-time) | 0.701 | 0.586 | バランス | |
+| Phase 2-B v6-α | **0.535** | **0.677** ⭐ | hold-bias 安定 | **チャンピオン** |
+| Phase 3 v8 | 0.412 | 0.581 | visual がノイズ注入 | ❌ |
+
+**最終モデル = v6-α** (`checkpoints/itm_phase2b_v6a_best.pt`)。Phase 4 (量子化) / Phase 5 (HF 公開) へ移行。
+
+
 ### v5 旧候補（再評価）
 
 | 修正 | 詳細 |
